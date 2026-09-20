@@ -1,21 +1,46 @@
-# LiteWAF
+# LiteEdge
 
-LiteWAF is a lightweight Docker-hosted NGINX control plane derived from the original
-theonemule/docker-waf project. It keeps the hardened NGINX plus ModSecurity and OWASP
-Core Rule Set edge, but replaces the fixed demo proxy configuration with a small
-Bootstrap management UI.
+LiteEdge is a lightweight reverse proxy and web application firewall built around
+NGINX, ModSecurity, and the OWASP Core Rule Set. It is derived from the original
+theonemule/docker-waf project, but replaces the fixed demo proxy configuration
+with a small Bootstrap management UI and shell-only control plane.
+
+The distributable product is a pre-built Alpine/musl release bundle. The same
+bundle is consumed by both the hardened Docker image and the standalone Alpine
+installer. Production deployments do not need a compiler toolchain.
 
 The management plane is intentionally small:
 
-- Ubuntu 26.04 LTS
-- NGINX on ports 80 and 443
-- ModSecurity plus OWASP Core Rule Set
+- Alpine Linux runtime
+- NGINX built from source with the ModSecurity-nginx connector compiled in
+- libModSecurity plus OWASP Core Rule Set
 - Bash shell scripts only for application logic
 - fcgiwrap to expose shell CGI behind NGINX
 - HTTP Basic Authentication using an OpenSSL SHA-512 password hash
 - Bootstrap 5.3.8 CSS vendored locally
-- Flat-file configuration under /data
+- Flat-file persistent configuration
 - No Node.js, Python, PHP, database, or application framework
+
+## Release contents
+
+Each release asset contains the complete LiteEdge runtime under /opt/liteedge:
+
+- NGINX
+- libModSecurity
+- OWASP Core Rule Set
+- dehydrated ACME client
+- LiteEdge shell control/API scripts
+- CGI management UI
+- Bootstrap assets
+- NGINX and ModSecurity templates
+- OpenRC service definition
+- standalone Alpine installer
+- build/version manifest and third-party licenses
+
+The source build is pinned in build/versions.env. scripts/build-release.sh
+performs a serial Alpine build by default so it also works on small build hosts.
+The release workflow publishes the generated tarball and SHA-256 checksum for
+version tags.
 
 ## Features
 
@@ -36,27 +61,25 @@ Each host supports three certificate modes:
 Let's Encrypt certificates are checked twice daily by a small shell renewal loop.
 No cron daemon or systemd is required inside the container.
 
-## Install
+## Docker install
 
-1. Clone the repository.
+Clone the repository and run:
 
-    git clone https://github.com/theonemule/LiteWAF.git
-    cd LiteWAF
-
-2. Run the installer.
-
+    git clone https://github.com/theonemule/LiteEdge.git
+    cd LiteEdge
     ./install.sh
 
-On first run the installer creates .env, generates a random admin password, builds
-the image, and starts the container.
+On first run the installer creates .env, generates a random admin password,
+prepares the persistent data directory for the unprivileged container user, builds
+the thin Alpine runtime image from the selected LiteEdge release, and starts it.
 
 Open:
 
     https://SERVER_IP/
 
 Requests to the management listener over HTTP are redirected to HTTPS before Basic
-Auth credentials are requested. The initial HTTPS management certificate is self-signed.
-Use the Basic Auth credentials printed by install.sh.
+Auth credentials are requested. The initial HTTPS management certificate is
+self-signed. Use the Basic Auth credentials printed by install.sh.
 
 To enable Let's Encrypt, edit .env and set:
 
@@ -69,9 +92,33 @@ Then restart:
 For HTTP-01 issuance, the host name and aliases must resolve to this server and TCP
 port 80 must be reachable from the Internet.
 
+### Container hardening
+
+The Compose deployment runs LiteEdge as UID/GID 10001, uses a read-only root
+filesystem, drops all Linux capabilities, enables no-new-privileges, sets a PID
+limit, and provides only /data plus a small /tmp tmpfs as writable storage.
+NGINX listens on unprivileged container ports 8080 and 8443, which are mapped to
+host ports 80 and 443. The CGI worker runs as the same unprivileged LiteEdge user.
+
+## Standalone Alpine install
+
+The same release bundle can be installed directly on Alpine Linux. After downloading
+scripts/install-alpine.sh, run it as root:
+
+    ./install-alpine.sh
+
+To install a specific release:
+
+    ./install-alpine.sh --version v0.1.0
+
+The standalone service runs as the locked-down liteedge account. Only the NGINX
+binary receives CAP_NET_BIND_SERVICE, allowing the unprivileged process to bind
+ports 80 and 443. Persistent state is stored under /var/lib/liteedge, configuration
+under /etc/conf.d/liteedge, and OpenRC manages the service.
+
 ## Data layout
 
-All persistent state is under the ./data bind mount:
+In Docker, persistent state is under the ./data bind mount:
 
     data/
       auth/       Basic Auth password file
@@ -79,46 +126,70 @@ All persistent state is under the ./data bind mount:
       certs/      active host certificates
       acme/       ACME account, challenges, and issued certificates
       logs/       certificate renewal logs
+      nginx/      generated runtime NGINX configuration
       www/        local static site content
 
 The UI never writes NGINX configuration directly. Shell utilities validate submitted
-values, render generated virtual-host configuration, run nginx -t, and only keep the
-generated configuration if validation succeeds.
+values, render generated virtual-host configuration, run nginx -t, and only keep
+the generated configuration if validation succeeds.
 
 ## Shell utilities
 
 The UI calls the same scripts that can be used manually inside the container:
 
-    /opt/litewaf/bin/sitectl.sh list
+    /opt/liteedge/bin/sitectl.sh list
 
-    /opt/litewaf/bin/sitectl.sh save       app.example.com proxy http://app:8080 "" "" 1 1 0
+    /opt/liteedge/bin/sitectl.sh save \
+      app.example.com proxy http://app:8080 "" "" 1 1 0
 
-    /opt/litewaf/bin/sitectl.sh route-add       app.example.com prefix /socket/ http://socket:9000 1
+    /opt/liteedge/bin/sitectl.sh route-add \
+      app.example.com prefix /socket/ http://socket:9000 1
 
-    /opt/litewaf/bin/certctl.sh selfsigned app.example.com
-    /opt/litewaf/bin/certctl.sh letsencrypt app.example.com
+    /opt/liteedge/bin/certctl.sh selfsigned app.example.com
+    /opt/liteedge/bin/certctl.sh letsencrypt app.example.com
 
 ## Security model
 
 The management UI is protected by NGINX HTTP Basic Auth over HTTPS. HTTP requests to
-the management listener are redirected before authentication. The UI uses no client-side
-application framework and loads its Bootstrap stylesheet
-from the local container.
+the management listener are redirected before authentication. The UI uses no
+client-side application framework and loads its Bootstrap stylesheet locally.
 
 Generated NGINX configuration receives baseline security headers. Site WAF mode uses
-ModSecurity with Ubuntu's packaged OWASP Core Rule Set. HTTPS virtual hosts use TLS
-1.2 and 1.3 plus HSTS.
+ModSecurity with the bundled OWASP Core Rule Set. HTTPS virtual hosts use TLS 1.2
+and 1.3 plus HSTS.
 
-The CGI worker performs privileged operations such as writing generated NGINX
-configuration and reloading NGINX, so fcgiwrap runs as root. Its Unix socket is only
-reachable by the local NGINX process, and the CGI endpoint is only exposed through
-the Basic-Auth-protected management server. Values that become NGINX directives are
-constrained before rendering.
+All mutable application state and generated NGINX configuration live outside
+/opt/liteedge. The release tree is immutable at runtime. Configuration mutations
+are transactional: generated NGINX configuration is validated before activation and
+state is rolled back if validation or reload fails.
 
-## Development
+## Building a release
 
-Validate all shell files with:
+A Docker engine is required. The build compiles ModSecurity and NGINX inside pinned
+Alpine and packages the complete runtime:
 
-    for f in install.sh entrypoint.sh bin/*.sh cgi/*.sh; do bash -n "$f"; done
+    ./scripts/build-release.sh 0.1.0
 
-A Docker engine is required for an end-to-end image build and runtime test.
+The default native build concurrency is one job. A larger build machine may opt into
+parallel compilation with BUILD_JOBS, but release validation does not require it.
+
+Artifacts are written to dist/:
+
+    liteedge-linux-musl-x86_64.tar.gz
+    liteedge-linux-musl-x86_64.tar.gz.sha256
+
+## Development validation
+
+Validate the shell sources with:
+
+    for f in install.sh entrypoint.sh bin/*.sh cgi/*.sh scripts/*.sh; do
+      bash -n "$f"
+    done
+
+Run ShellCheck:
+
+    shellcheck -x install.sh entrypoint.sh bin/*.sh cgi/*.sh scripts/*.sh
+
+Validate Compose:
+
+    ADMIN_PASSWORD=test docker compose config

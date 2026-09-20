@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # shellcheck disable=SC1091
-source /opt/litewaf/bin/common.sh
+source /opt/liteedge/bin/common.sh
 
 cmd="${1:-}"
 shift || true
@@ -16,11 +16,11 @@ rollback_state() {
   rm -rf "$SITE_DIR"
   mkdir -p "$SITE_DIR"
   cp -a "$STATE_BACKUP/." "$SITE_DIR/" 2>/dev/null || true
-  /opt/litewaf/bin/render-nginx.sh >/dev/null 2>&1 || true
+  /opt/liteedge/bin/render-nginx.sh >/dev/null 2>&1 || true
 }
 
 apply_state() {
-  if ! /opt/litewaf/bin/render-nginx.sh; then
+  if ! /opt/liteedge/bin/render-nginx.sh; then
     rollback_state
     rm -rf "$STATE_BACKUP"
     die "Generated NGINX configuration was invalid. The change was rolled back."
@@ -53,7 +53,7 @@ case "$cmd" in
     validate_aliases "$aliases"
 
     slug="$(slug_for_host "$host")"
-    [[ -n "$root" ]] || root="/data/www/$slug"
+    [[ -n "$root" ]] || root="$DATA_DIR/www/$slug"
 
     if [[ "$mode" == static ]]; then
       validate_root "$root"
@@ -64,7 +64,6 @@ case "$cmd" in
     fi
 
     snapshot_state
-
     file="$(site_file "$host")"
     tmp="$(mktemp)"
     {
@@ -79,20 +78,16 @@ case "$cmd" in
     } > "$tmp"
     mv "$tmp" "$file"
     mkdir -p "$(route_dir "$host")"
-
     apply_state
     ;;
-
   delete)
     host="${1:-}"
     validate_host "$host"
-
     snapshot_state
     rm -f "$(site_file "$host")"
     rm -rf "$(route_dir "$host")"
     apply_state
     ;;
-
   route-add)
     host="${1:-}"
     match="${2:-prefix}"
@@ -107,7 +102,6 @@ case "$cmd" in
     validate_upstream "$target"
 
     snapshot_state
-
     dir="$(route_dir "$host")"
     mkdir -p "$dir"
     id="$(printf '%s\n%s\n%s' "$match" "$path" "$target" | sha256sum | cut -c1-16)"
@@ -118,28 +112,23 @@ case "$cmd" in
       printf 'TARGET=%s\n' "$target"
       printf 'WEBSOCKET=%s\n' "$websocket"
     } > "$dir/$id.route"
-
     apply_state
     ;;
-
   route-delete)
     host="${1:-}"
     id="${2:-}"
     validate_host "$host"
     [[ "$id" =~ ^[a-f0-9]{16}$ ]] || die "Invalid route id."
-
     snapshot_state
     rm -f "$(route_dir "$host")/$id.route"
     apply_state
     ;;
-
   list)
     shopt -s nullglob
     for file in "$SITE_DIR"/*.site; do
       kv_get "$file" HOST
     done
     ;;
-
   *)
     cat >&2 <<USAGE
 Usage:

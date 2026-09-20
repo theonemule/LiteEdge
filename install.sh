@@ -16,24 +16,42 @@ command -v openssl >/dev/null 2>&1 || {
 }
 
 mkdir -p data
-chmod 755 data
+chmod 750 data
+
+uid="$(id -u)"
+gid="$(id -g)"
+if [[ "$uid" == 0 ]]; then
+  uid=10001
+  gid=10001
+  chown "$uid:$gid" data
+fi
 
 if [[ ! -f .env ]]; then
-  password="$(openssl rand -base64 36 | tr -d '\n' | tr '/+' '_-')"
+  password="$(openssl rand -hex 24)"
   cat > .env <<ENV
 ADMIN_USER=admin
 ADMIN_PASSWORD=$password
 ACME_EMAIL=
 TZ=UTC
+LITEEDGE_VERSION=v0.1.0
+LITEEDGE_REPO=theonemule/LiteEdge
+LITEEDGE_UID=$uid
+LITEEDGE_GID=$gid
 ENV
   chmod 600 .env
   echo "Created .env"
   echo "Admin user: admin"
   echo "Admin password: $password"
   echo "Set ACME_EMAIL in .env before using Let's Encrypt."
+else
+  grep -q '^LITEEDGE_VERSION=' .env || printf '\nLITEEDGE_VERSION=v0.1.0\n' >> .env
+  grep -q '^LITEEDGE_REPO=' .env || printf 'LITEEDGE_REPO=theonemule/LiteEdge\n' >> .env
+  grep -q '^LITEEDGE_UID=' .env || printf 'LITEEDGE_UID=%s\n' "$uid" >> .env
+  grep -q '^LITEEDGE_GID=' .env || printf 'LITEEDGE_GID=%s\n' "$gid" >> .env
 fi
 
 docker compose up -d --build
+
 echo
-echo "LiteWAF is running on ports 80 and 443."
-echo "Open http://<server-ip>/ or https://<server-ip>/"
+echo "LiteEdge is running on host ports 80 and 443."
+echo "Open https://<server-ip>/"

@@ -1,15 +1,35 @@
 services:
-  litewaf:
-    build: .
-    container_name: litewaf
+  liteedge:
+    build:
+      context: .
+      args:
+        LITEEDGE_VERSION: "${LITEEDGE_VERSION:-v0.1.0}"
+        LITEEDGE_REPO: "${LITEEDGE_REPO:-theonemule/LiteEdge}"
+    image: "liteedge:${LITEEDGE_VERSION:-v0.1.0}"
+    container_name: liteedge
     restart: unless-stopped
+    init: true
+    user: "${LITEEDGE_UID:-10001}:${LITEEDGE_GID:-10001}"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    stop_grace_period: 10s
     ports:
-      - "80:80"
-      - "443:443"
+      - "80:8080"
+      - "443:8443"
     environment:
       ADMIN_USER: "${ADMIN_USER:-admin}"
       ADMIN_PASSWORD: "${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}"
       ACME_EMAIL: "${ACME_EMAIL:-}"
       TZ: "${TZ:-UTC}"
+      DATA_DIR: /data
+      LITEEDGE_RUN_DIR: /tmp/liteedge-run
+      LITEEDGE_HTTP_PORT: "8080"
+      LITEEDGE_HTTPS_PORT: "8443"
     volumes:
       - ./data:/data
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=32m,mode=1777

@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # shellcheck disable=SC1091
-source /opt/litewaf/bin/common.sh
+source /opt/liteedge/bin/common.sh
 
-stage="$(mktemp -d /etc/nginx/litewaf-sites.stage.XXXXXX)"
+mkdir -p "$NGINX_DIR"
+stage="$(mktemp -d "$NGINX_DIR/sites.stage.XXXXXX")"
 trap 'rm -rf "$stage"' EXIT
 shopt -s nullglob
+
+HTTP_PORT="${LITEEDGE_HTTP_PORT:-80}"
+HTTPS_PORT="${LITEEDGE_HTTPS_PORT:-443}"
 
 emit_proxy_headers() {
   cat <<'CONF'
@@ -42,8 +46,8 @@ emit_route() {
   esac
 
   printf '    %s {\n' "$location"
-  printf '        set $litewaf_route_%s "%s";\n' "$id" "$target"
-  printf '        proxy_pass $litewaf_route_%s;\n' "$id"
+  printf '        set $liteedge_route_%s "%s";\n' "$id" "$target"
+  printf '        proxy_pass $liteedge_route_%s;\n' "$id"
   emit_proxy_headers
   [[ "$websocket" == 1 ]] && emit_websocket_headers
   echo "    }"
@@ -71,7 +75,6 @@ emit_app() {
     }
 CONF
       ;;
-
     wordpress)
       cat <<'CONF'
     location ~ /\. {
@@ -96,19 +99,18 @@ CONF
 CONF
       cat <<CONF
     location / {
-        set \$litewaf_default_upstream "$upstream";
-        proxy_pass \$litewaf_default_upstream;
+        set \$liteedge_default_upstream "$upstream";
+        proxy_pass \$liteedge_default_upstream;
 CONF
       emit_proxy_headers
       [[ "$websocket" == 1 ]] && emit_websocket_headers
       echo "    }"
       ;;
-
     proxy)
       cat <<CONF
     location / {
-        set \$litewaf_default_upstream "$upstream";
-        proxy_pass \$litewaf_default_upstream;
+        set \$liteedge_default_upstream "$upstream";
+        proxy_pass \$liteedge_default_upstream;
 CONF
       emit_proxy_headers
       [[ "$websocket" == 1 ]] && emit_websocket_headers
@@ -134,22 +136,22 @@ for file in "$SITE_DIR"/*.site; do
 
   {
     echo "server {"
-    echo "    listen 80;"
+    echo "    listen $HTTP_PORT;"
     echo "    server_name $host $aliases;"
-    echo "    include /etc/nginx/snippets/litewaf-security.conf;"
+    echo "    include /opt/liteedge/etc/nginx/security.conf;"
     if [[ "$waf" == 1 ]]; then
       echo "    modsecurity on;"
       if [[ "$mode" == wordpress ]]; then
-        echo "    modsecurity_rules_file /etc/nginx/modsec/wordpress.conf;"
+        echo "    modsecurity_rules_file $NGINX_DIR/modsecurity-wordpress.conf;"
       else
-        echo "    modsecurity_rules_file /etc/nginx/modsec/main.conf;"
+        echo "    modsecurity_rules_file $NGINX_DIR/modsecurity-main.conf;"
       fi
     fi
-    cat <<'CONF'
+    cat <<CONF
     location ^~ /.well-known/acme-challenge/ {
-        root /data/acme/challenges;
+        root $ACME_DIR/challenges;
         auth_basic off;
-        try_files $uri =404;
+        try_files \$uri =404;
     }
 CONF
     if [[ "$force_https" == 1 && -s "$cert" && -s "$key" ]]; then
@@ -166,7 +168,7 @@ CONF
     if [[ -s "$cert" && -s "$key" ]]; then
       echo
       echo "server {"
-      echo "    listen 443 ssl;"
+      echo "    listen $HTTPS_PORT ssl;"
       echo "    http2 on;"
       echo "    server_name $host $aliases;"
       echo "    ssl_certificate $cert;"
@@ -174,14 +176,15 @@ CONF
       echo "    ssl_protocols TLSv1.2 TLSv1.3;"
       echo "    ssl_session_cache shared:SSL:10m;"
       echo "    ssl_session_timeout 10m;"
+      echo "    ssl_session_tickets off;"
       echo '    add_header Strict-Transport-Security "max-age=31536000" always;'
-      echo "    include /etc/nginx/snippets/litewaf-security.conf;"
+      echo "    include /opt/liteedge/etc/nginx/security.conf;"
       if [[ "$waf" == 1 ]]; then
         echo "    modsecurity on;"
         if [[ "$mode" == wordpress ]]; then
-          echo "    modsecurity_rules_file /etc/nginx/modsec/wordpress.conf;"
+          echo "    modsecurity_rules_file $NGINX_DIR/modsecurity-wordpress.conf;"
         else
-          echo "    modsecurity_rules_file /etc/nginx/modsec/main.conf;"
+          echo "    modsecurity_rules_file $NGINX_DIR/modsecurity-main.conf;"
         fi
       fi
       emit_app "$host" "$mode" "$upstream" "$root" "$websocket"
@@ -198,7 +201,7 @@ fi
 mv "$stage" "$NGINX_SITE_DIR"
 trap - EXIT
 
-if [[ "${SKIP_NGINX_TEST:-0}" != 1 ]] && ! nginx -t; then
+if [[ "${SKIP_NGINX_TEST:-0}" != 1 ]] && ! "$NGINX_BIN" -t -c "$NGINX_CONF"; then
   rm -rf "$NGINX_SITE_DIR"
   [[ -d "$backup" ]] && mv "$backup" "$NGINX_SITE_DIR"
   echo "Generated NGINX configuration failed validation; previous configuration restored." >&2

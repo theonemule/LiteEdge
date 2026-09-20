@@ -3,7 +3,7 @@ set -uo pipefail
 
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # shellcheck disable=SC1091
-source /opt/litewaf/bin/common.sh
+source /opt/liteedge/bin/common.sh
 
 declare -A PARAM
 
@@ -54,7 +54,7 @@ response_headers() {
 
 page_head() {
   local title
-  title="$(html_escape "${1:-LiteWAF}")"
+  title="$(html_escape "${1:-LiteEdge}")"
   response_headers
   cat <<HTML
 <!doctype html>
@@ -62,13 +62,13 @@ page_head() {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>$title - LiteWAF</title>
+  <title>$title - LiteEdge</title>
   <link href="/assets/bootstrap.min.css" rel="stylesheet">
 </head>
 <body class="bg-body-tertiary">
 <nav class="navbar navbar-expand-lg bg-dark navbar-dark mb-4">
   <div class="container">
-    <a class="navbar-brand fw-semibold" href="/">LiteWAF</a>
+    <a class="navbar-brand fw-semibold" href="/">LiteEdge</a>
     <span class="navbar-text">Lightweight NGINX control plane</span>
   </div>
 </nav>
@@ -258,8 +258,8 @@ site_editor() {
       </div>
       <div class="col-12">
         <label class="form-label">Static document root</label>
-        <input class="form-control font-monospace" name="root" value="$(html_escape "$root")" placeholder="/data/www/app.example.com">
-        <div class="form-text">Used only by Local static content. Roots are restricted to /data/www or /srv.</div>
+        <input class="form-control font-monospace" name="root" value="$(html_escape "$root")" placeholder="/var/lib/liteedge/www/app.example.com">
+        <div class="form-text">Used only by Local static content. Roots are restricted to the LiteEdge data www directory or /srv.</div>
       </div>
       <div class="col-12">
         <div class="form-check form-switch mb-2">
@@ -439,7 +439,7 @@ handle_post() {
   case "$path" in
     /admin/site/save)
       host="${PARAM[host]:-}"
-      run_or_error /opt/litewaf/bin/sitectl.sh save \
+      run_or_error /opt/liteedge/bin/sitectl.sh save \
         "$host" \
         "${PARAM[mode]:-proxy}" \
         "${PARAM[upstream]:-}" \
@@ -453,13 +453,13 @@ handle_post() {
 
     /admin/site/delete)
       host="${PARAM[host]:-}"
-      run_or_error /opt/litewaf/bin/sitectl.sh delete "$host"
+      run_or_error /opt/liteedge/bin/sitectl.sh delete "$host"
       redirect "/"
       ;;
 
     /admin/route/add)
       host="${PARAM[host]:-}"
-      run_or_error /opt/litewaf/bin/sitectl.sh route-add \
+      run_or_error /opt/liteedge/bin/sitectl.sh route-add \
         "$host" \
         "${PARAM[match]:-prefix}" \
         "${PARAM[path]:-/}" \
@@ -470,19 +470,19 @@ handle_post() {
 
     /admin/route/delete)
       host="${PARAM[host]:-}"
-      run_or_error /opt/litewaf/bin/sitectl.sh route-delete "$host" "${PARAM[id]:-}"
+      run_or_error /opt/liteedge/bin/sitectl.sh route-delete "$host" "${PARAM[id]:-}"
       redirect "/admin/site?host=$host"
       ;;
 
     /admin/cert/selfsigned)
       host="${PARAM[host]:-}"
-      run_or_error /opt/litewaf/bin/certctl.sh selfsigned "$host"
+      run_or_error /opt/liteedge/bin/certctl.sh selfsigned "$host"
       redirect "/admin/site?host=$host"
       ;;
 
     /admin/cert/letsencrypt)
       host="${PARAM[host]:-}"
-      run_or_error /opt/litewaf/bin/certctl.sh letsencrypt "$host"
+      run_or_error /opt/liteedge/bin/certctl.sh letsencrypt "$host"
       redirect "/admin/site?host=$host"
       ;;
 
@@ -492,7 +492,7 @@ handle_post() {
       trap 'rm -rf "$tmpdir"' EXIT
       printf '%s\n' "${PARAM[certificate]:-}" > "$tmpdir/fullchain.pem"
       printf '%s\n' "${PARAM[private_key]:-}" > "$tmpdir/privkey.pem"
-      run_or_error /opt/litewaf/bin/certctl.sh import "$host" "$tmpdir/fullchain.pem" "$tmpdir/privkey.pem"
+      run_or_error /opt/liteedge/bin/certctl.sh import "$host" "$tmpdir/fullchain.pem" "$tmpdir/privkey.pem"
       rm -rf "$tmpdir"
       trap - EXIT
       redirect "/admin/site?host=$host"

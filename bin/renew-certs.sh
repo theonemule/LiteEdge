@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -u
 # shellcheck disable=SC1091
-source /opt/litewaf/bin/common.sh
+source /opt/liteedge/bin/common.sh
 
 shopt -s nullglob
 status=0
@@ -12,7 +12,7 @@ for mode_file in "$CERT_DIR"/*/mode; do
   site="$SITE_DIR/$slug.site"
   [[ -f "$site" ]] || continue
   host="$(kv_get "$site" HOST)"
-  if ! /opt/litewaf/bin/certctl.sh letsencrypt "$host"; then
+  if ! /opt/liteedge/bin/certctl.sh letsencrypt "$host"; then
     echo "Renewal failed for $host" >&2
     status=1
   fi
