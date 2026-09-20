@@ -103,6 +103,13 @@ install -d -o liteedge -g liteedge -m 0755 \
   /var/lib/liteedge/www
 
 chown -R liteedge:liteedge /var/lib/liteedge
+
+# A file capability makes the dynamic loader enter secure mode, where
+# LD_LIBRARY_PATH is ignored. Expose the bundled libModSecurity SONAME through
+# Alpine's trusted /usr/local/lib search path before granting bind-service.
+ln -sfn /opt/liteedge/lib/libmodsecurity.so.3 /usr/local/lib/libmodsecurity.so.3
+ln -sfn /opt/liteedge/lib/libmodsecurity.so /usr/local/lib/libmodsecurity.so
+
 setcap cap_net_bind_service=+ep /opt/liteedge/sbin/nginx
 
 install -m 0755 /opt/liteedge/share/openrc/liteedge /etc/init.d/liteedge
