@@ -1,6 +1,6 @@
-# lazyCB
+# LiteWAF
 
-lazyCB is a lightweight Docker-hosted NGINX control plane derived from the original
+LiteWAF is a lightweight Docker-hosted NGINX control plane derived from the original
 theonemule/docker-waf project. It keeps the hardened NGINX plus ModSecurity and OWASP
 Core Rule Set edge, but replaces the fixed demo proxy configuration with a small
 Bootstrap management UI.
@@ -40,8 +40,8 @@ No cron daemon or systemd is required inside the container.
 
 1. Clone the repository.
 
-    git clone https://github.com/theonemule/lazyCB.git
-    cd lazyCB
+    git clone https://github.com/theonemule/LiteWAF.git
+    cd LiteWAF
 
 2. Run the installer.
 
@@ -89,14 +89,14 @@ generated configuration if validation succeeds.
 
 The UI calls the same scripts that can be used manually inside the container:
 
-    /opt/lazycb/bin/sitectl.sh list
+    /opt/litewaf/bin/sitectl.sh list
 
-    /opt/lazycb/bin/sitectl.sh save       app.example.com proxy http://app:8080 "" "" 1 1 0
+    /opt/litewaf/bin/sitectl.sh save       app.example.com proxy http://app:8080 "" "" 1 1 0
 
-    /opt/lazycb/bin/sitectl.sh route-add       app.example.com prefix /socket/ http://socket:9000 1
+    /opt/litewaf/bin/sitectl.sh route-add       app.example.com prefix /socket/ http://socket:9000 1
 
-    /opt/lazycb/bin/certctl.sh selfsigned app.example.com
-    /opt/lazycb/bin/certctl.sh letsencrypt app.example.com
+    /opt/litewaf/bin/certctl.sh selfsigned app.example.com
+    /opt/litewaf/bin/certctl.sh letsencrypt app.example.com
 
 ## Security model
 

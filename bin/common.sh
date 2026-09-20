@@ -5,7 +5,7 @@ DATA_DIR="${DATA_DIR:-/data}"
 SITE_DIR="$DATA_DIR/sites"
 CERT_DIR="$DATA_DIR/certs"
 ACME_DIR="$DATA_DIR/acme"
-NGINX_SITE_DIR="${NGINX_SITE_DIR:-/etc/nginx/lazycb-sites}"
+NGINX_SITE_DIR="${NGINX_SITE_DIR:-/etc/nginx/litewaf-sites}"
 
 mkdir -p "$SITE_DIR" "$CERT_DIR" "$ACME_DIR/challenges/.well-known/acme-challenge" "$ACME_DIR/certs" "$NGINX_SITE_DIR"
 

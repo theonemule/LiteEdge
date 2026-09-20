@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # shellcheck disable=SC1091
-source /opt/lazycb/bin/common.sh
+source /opt/litewaf/bin/common.sh
 
 cmd="${1:-}"
 shift || true
@@ -16,11 +16,11 @@ rollback_state() {
   rm -rf "$SITE_DIR"
   mkdir -p "$SITE_DIR"
   cp -a "$STATE_BACKUP/." "$SITE_DIR/" 2>/dev/null || true
-  /opt/lazycb/bin/render-nginx.sh >/dev/null 2>&1 || true
+  /opt/litewaf/bin/render-nginx.sh >/dev/null 2>&1 || true
 }
 
 apply_state() {
-  if ! /opt/lazycb/bin/render-nginx.sh; then
+  if ! /opt/litewaf/bin/render-nginx.sh; then
     rollback_state
     rm -rf "$STATE_BACKUP"
     die "Generated NGINX configuration was invalid. The change was rolled back."

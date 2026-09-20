@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # shellcheck disable=SC1091
-source /opt/lazycb/bin/common.sh
+source /opt/litewaf/bin/common.sh
 
-stage="$(mktemp -d /etc/nginx/lazycb-sites.stage.XXXXXX)"
+stage="$(mktemp -d /etc/nginx/litewaf-sites.stage.XXXXXX)"
 trap 'rm -rf "$stage"' EXIT
 shopt -s nullglob
 
@@ -42,8 +42,8 @@ emit_route() {
   esac
 
   printf '    %s {\n' "$location"
-  printf '        set $lazycb_route_%s "%s";\n' "$id" "$target"
-  printf '        proxy_pass $lazycb_route_%s;\n' "$id"
+  printf '        set $litewaf_route_%s "%s";\n' "$id" "$target"
+  printf '        proxy_pass $litewaf_route_%s;\n' "$id"
   emit_proxy_headers
   [[ "$websocket" == 1 ]] && emit_websocket_headers
   echo "    }"
@@ -96,8 +96,8 @@ CONF
 CONF
       cat <<CONF
     location / {
-        set \$lazycb_default_upstream "$upstream";
-        proxy_pass \$lazycb_default_upstream;
+        set \$litewaf_default_upstream "$upstream";
+        proxy_pass \$litewaf_default_upstream;
 CONF
       emit_proxy_headers
       [[ "$websocket" == 1 ]] && emit_websocket_headers
@@ -107,8 +107,8 @@ CONF
     proxy)
       cat <<CONF
     location / {
-        set \$lazycb_default_upstream "$upstream";
-        proxy_pass \$lazycb_default_upstream;
+        set \$litewaf_default_upstream "$upstream";
+        proxy_pass \$litewaf_default_upstream;
 CONF
       emit_proxy_headers
       [[ "$websocket" == 1 ]] && emit_websocket_headers
@@ -136,7 +136,7 @@ for file in "$SITE_DIR"/*.site; do
     echo "server {"
     echo "    listen 80;"
     echo "    server_name $host $aliases;"
-    echo "    include /etc/nginx/snippets/lazycb-security.conf;"
+    echo "    include /etc/nginx/snippets/litewaf-security.conf;"
     if [[ "$waf" == 1 ]]; then
       echo "    modsecurity on;"
       if [[ "$mode" == wordpress ]]; then
@@ -175,7 +175,7 @@ CONF
       echo "    ssl_session_cache shared:SSL:10m;"
       echo "    ssl_session_timeout 10m;"
       echo '    add_header Strict-Transport-Security "max-age=31536000" always;'
-      echo "    include /etc/nginx/snippets/lazycb-security.conf;"
+      echo "    include /etc/nginx/snippets/litewaf-security.conf;"
       if [[ "$waf" == 1 ]]; then
         echo "    modsecurity on;"
         if [[ "$mode" == wordpress ]]; then

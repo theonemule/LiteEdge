@@ -1,7 +1,7 @@
 services:
-  lazycb:
+  litewaf:
     build: .
-    container_name: lazycb
+    container_name: litewaf
     restart: unless-stopped
     ports:
       - "80:80"

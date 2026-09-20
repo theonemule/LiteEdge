@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # shellcheck disable=SC1091
-source /opt/lazycb/bin/common.sh
+source /opt/litewaf/bin/common.sh
 
 cmd="${1:-}"
 host="${2:-}"
@@ -17,7 +17,7 @@ cdir="$(cert_dir "$host")"
 mkdir -p "$cdir"
 
 install_and_reload() {
-  /opt/lazycb/bin/render-nginx.sh
+  /opt/litewaf/bin/render-nginx.sh
   reload_nginx
 }
 

@@ -35,5 +35,5 @@ fi
 
 docker compose up -d --build
 echo
-echo "lazyCB is running on ports 80 and 443."
+echo "LiteWAF is running on ports 80 and 443."
 echo "Open http://<server-ip>/ or https://<server-ip>/"

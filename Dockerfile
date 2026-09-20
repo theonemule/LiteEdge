@@ -15,20 +15,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY nginx/nginx.conf /etc/nginx/nginx.conf
-COPY nginx/admin.conf /etc/nginx/conf.d/00-lazycb-admin.conf
-COPY nginx/security.conf /etc/nginx/snippets/lazycb-security.conf
+COPY nginx/admin.conf /etc/nginx/conf.d/00-litewaf-admin.conf
+COPY nginx/security.conf /etc/nginx/snippets/litewaf-security.conf
 COPY nginx/modsecurity.conf /etc/nginx/modsec/main.conf
 COPY nginx/modsecurity-wordpress.conf /etc/nginx/modsec/wordpress.conf
-COPY bin /opt/lazycb/bin
-COPY cgi /opt/lazycb/cgi
-COPY ui /opt/lazycb/ui
-COPY entrypoint.sh /opt/lazycb/entrypoint.sh
+COPY bin /opt/litewaf/bin
+COPY cgi /opt/litewaf/cgi
+COPY ui /opt/litewaf/ui
+COPY entrypoint.sh /opt/litewaf/entrypoint.sh
 
-RUN chmod +x /opt/lazycb/entrypoint.sh /opt/lazycb/bin/*.sh /opt/lazycb/cgi/*.sh \
-    && mkdir -p /data/sites /data/certs /data/auth /data/acme/challenges/.well-known/acme-challenge /data/acme/certs /data/logs /etc/nginx/lazycb-sites \
+RUN chmod +x /opt/litewaf/entrypoint.sh /opt/litewaf/bin/*.sh /opt/litewaf/cgi/*.sh \
+    && mkdir -p /data/sites /data/certs /data/auth /data/acme/challenges/.well-known/acme-challenge /data/acme/certs /data/logs /etc/nginx/litewaf-sites \
     && sed -i 's/^SecRuleEngine .*/SecRuleEngine On/' /etc/nginx/modsecurity.conf
 
 EXPOSE 80 443
 VOLUME ["/data"]
 
-ENTRYPOINT ["/opt/lazycb/entrypoint.sh"]
+ENTRYPOINT ["/opt/litewaf/entrypoint.sh"]
