@@ -25,11 +25,12 @@ RUN apk add --no-cache \
     && test -x /opt/liteedge/entrypoint.sh \
     && LD_LIBRARY_PATH=/opt/liteedge/lib /opt/liteedge/sbin/nginx -V 2>&1 | grep -q 'ModSecurity-nginx'
 
-ENV DATA_DIR=/data \
+ENV PATH=/opt/liteedge/bin:/opt/liteedge/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    LD_LIBRARY_PATH=/opt/liteedge/lib \
+    DATA_DIR=/data \
     LITEEDGE_RUN_DIR=/tmp/liteedge-run \
     LITEEDGE_HTTP_PORT=8080 \
     LITEEDGE_HTTPS_PORT=8443
-
 USER 10001:10001
 VOLUME ["/data"]
 
