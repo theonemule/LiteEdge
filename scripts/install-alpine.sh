@@ -45,7 +45,7 @@ apk add --no-cache \
   bash ca-certificates curl openssl \
   fcgiwrap spawn-fcgi \
   pcre2 libxml2 yajl lmdb libcurl libstdc++ libgcc zlib libmaxminddb \
-  coreutils diffutils patch libcap openrc
+  coreutils diffutils patch lua5.3-libs libcap openrc
 
 if [ "$VERSION" = "latest" ]; then
   VERSION="$(

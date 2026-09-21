@@ -28,7 +28,7 @@ git -C "$SRC/ModSecurity" submodule update --init --recursive --depth 1
 (
   cd "$SRC/ModSecurity"
   ./build.sh
-  ./configure --prefix=/opt/liteedge --disable-static
+  ./configure --prefix=/opt/liteedge --disable-static --with-lua
   make -j"$BUILD_JOBS"
   make DESTDIR="$PKG" install
 )
@@ -141,6 +141,7 @@ zlib
 diffutils
 patch
 libmaxminddb
+lua5.3-libs
 EOF_RUNTIME
 {
   cat "$ROOT/build/versions.env"
@@ -151,6 +152,9 @@ echo "[6/6] validating and packaging"
 export LD_LIBRARY_PATH="$PREFIX/lib"
 "$PREFIX/sbin/nginx" -V 2>&1 | tee "$PREFIX/NGINX-BUILD.txt"
 grep -q -- '--add-module=.*/ModSecurity-nginx' "$PREFIX/NGINX-BUILD.txt" || { echo "NGINX build does not show the ModSecurity connector." >&2; exit 1; }
+ldd "$PREFIX/lib/libmodsecurity.so.3" | tee "$PREFIX/MODSECURITY-LDD.txt"
+grep -Eq 'liblua-5\.3\.so' "$PREFIX/MODSECURITY-LDD.txt" || { echo "ModSecurity build does not link Lua 5.3." >&2; exit 1; }
+echo 'Lua=5.3' >> "$PREFIX/VERSION"
 mkdir -p "$ROOT/dist"
 ARTIFACT="$ROOT/dist/liteedge-linux-musl-${ARCH}.tar.gz"
 tar --numeric-owner --owner=0 --group=0 -C "$PKG" -czf "$ARTIFACT" opt/liteedge

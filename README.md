@@ -13,7 +13,7 @@ The management plane is intentionally small:
 
 - Alpine Linux runtime
 - NGINX built from source with the ModSecurity-nginx connector compiled in
-- libModSecurity plus OWASP Core Rule Set
+- libModSecurity with Lua 5.3 scripting support plus OWASP Core Rule Set
 - Bash shell scripts only for application logic
 - fcgiwrap to expose shell CGI behind NGINX
 - HTTP Basic Authentication using an OpenSSL SHA-512 password hash
