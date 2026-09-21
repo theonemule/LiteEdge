@@ -3,9 +3,11 @@ set -euo pipefail
 # shellcheck disable=SC1091
 source /opt/liteedge/bin/common.sh
 
-mkdir -p "$NGINX_DIR"
+mkdir -p "$NGINX_DIR" "$NGINX_BASELINE_DIR" "$NGINX_DIFF_DIR" "$NGINX_CONFLICT_DIR"
 stage="$(mktemp -d "$NGINX_DIR/sites.stage.XXXXXX")"
-trap 'rm -rf "$stage"' EXIT
+baseline_stage="$(mktemp -d "$NGINX_DIR/baselines.stage.XXXXXX")"
+diff_stage="$(mktemp -d "$NGINX_DIR/diffs.stage.XXXXXX")"
+trap 'rm -rf "$stage" "$baseline_stage" "$diff_stage"' EXIT
 shopt -s nullglob
 
 HTTP_PORT="${LITEEDGE_HTTP_PORT:-80}"
@@ -28,6 +30,21 @@ emit_websocket_headers() {
         proxy_set_header Connection $connection_upgrade;
         proxy_read_timeout 3600s;
 CONF
+}
+
+emit_waf_config() {
+  local host="$1" mode="$2" rule_id
+  echo "    modsecurity on;"
+  if [[ "$mode" == wordpress ]]; then
+    echo "    modsecurity_rules_file $NGINX_DIR/modsecurity-wordpress.conf;"
+  else
+    echo "    modsecurity_rules_file $NGINX_DIR/modsecurity-main.conf;"
+  fi
+
+  while IFS= read -r rule_id; do
+    [[ -n "$rule_id" ]] || continue
+    echo "    modsecurity_rules 'SecRuleRemoveById $rule_id';"
+  done < <(disabled_waf_rules "$host")
 }
 
 emit_route() {
@@ -119,6 +136,59 @@ CONF
   esac
 }
 
+merge_manual_delta() {
+  local host="$1" generated="$2" output="$3"
+  local current baseline conflict
+  current="$(site_nginx_file "$host")"
+  baseline="$(site_nginx_baseline "$host")"
+  conflict="$(site_nginx_conflict "$host")"
+  rm -f "$conflict"
+
+  if [[ -s "$baseline" && -s "$current" ]] && ! cmp -s "$baseline" "$current"; then
+    command -v patch >/dev/null 2>&1 ||
+      die "Manual NGINX edits exist for $host, but patch is unavailable. Install the Alpine patch package before regenerating this site."
+
+    delta="$(mktemp)"
+    merged="$(mktemp)"
+    diff -U0 --label "generated baseline" --label "effective config" "$baseline" "$current" > "$delta" || true
+
+    if command -v diff3 >/dev/null 2>&1 && diff3 -m "$current" "$baseline" "$generated" > "$merged"; then
+      mv "$merged" "$output"
+    else
+      cp "$generated" "$output"
+      if ! patch --batch --silent --fuzz=0 "$output" < "$delta"; then
+        if [[ -s "$merged" ]]; then
+          cp "$merged" "$conflict"
+        else
+          cp "$output" "$conflict"
+        fi
+        rm -f "$delta" "$merged"
+        die "Manual NGINX edits for $host conflict with newly generated settings. Resolve the conflict from Advanced NGINX before retrying."
+      fi
+      rm -f "$merged"
+    fi
+    rm -f "$delta"
+  elif [[ -s "$current" && ! -s "$baseline" ]]; then
+    # Upgrade-safe bootstrap. Preserve any existing site config when baselines
+    # are introduced for the first time.
+    cp "$current" "$output"
+  else
+    cp "$generated" "$output"
+  fi
+}
+
+record_generated_diff() {
+  local host="$1" generated="$2" baseline diff_out
+  baseline="$(site_nginx_baseline "$host")"
+  diff_out="$diff_stage/$(slug_for_host "$host").diff"
+
+  if [[ -s "$baseline" ]] && ! cmp -s "$baseline" "$generated"; then
+    diff -u --label "previous generated" --label "new generated" "$baseline" "$generated" > "$diff_out" || true
+  elif [[ -s "$(site_nginx_diff "$host")" ]]; then
+    cp "$(site_nginx_diff "$host")" "$diff_out"
+  fi
+}
+
 for file in "$SITE_DIR"/*.site; do
   host="$(kv_get "$file" HOST)"
   mode="$(kv_get "$file" MODE)"
@@ -130,6 +200,7 @@ for file in "$SITE_DIR"/*.site; do
   websocket="$(kv_get "$file" WEBSOCKET)"
   slug="$(slug_for_host "$host")"
   out="$stage/$slug.conf"
+  generated="$baseline_stage/$slug.conf"
   cdir="$(cert_dir "$host")"
   cert="$cdir/fullchain.pem"
   key="$cdir/privkey.pem"
@@ -140,12 +211,7 @@ for file in "$SITE_DIR"/*.site; do
     echo "    server_name $host $aliases;"
     echo "    include /opt/liteedge/etc/nginx/security.conf;"
     if [[ "$waf" == 1 ]]; then
-      echo "    modsecurity on;"
-      if [[ "$mode" == wordpress ]]; then
-        echo "    modsecurity_rules_file $NGINX_DIR/modsecurity-wordpress.conf;"
-      else
-        echo "    modsecurity_rules_file $NGINX_DIR/modsecurity-main.conf;"
-      fi
+      emit_waf_config "$host" "$mode"
     fi
     cat <<CONF
     location ^~ /.well-known/acme-challenge/ {
@@ -180,17 +246,15 @@ CONF
       echo '    add_header Strict-Transport-Security "max-age=31536000" always;'
       echo "    include /opt/liteedge/etc/nginx/security.conf;"
       if [[ "$waf" == 1 ]]; then
-        echo "    modsecurity on;"
-        if [[ "$mode" == wordpress ]]; then
-          echo "    modsecurity_rules_file $NGINX_DIR/modsecurity-wordpress.conf;"
-        else
-          echo "    modsecurity_rules_file $NGINX_DIR/modsecurity-main.conf;"
-        fi
+        emit_waf_config "$host" "$mode"
       fi
       emit_app "$host" "$mode" "$upstream" "$root" "$websocket"
       echo "}"
     fi
-  } > "$out"
+  } > "$generated"
+
+  record_generated_diff "$host" "$generated"
+  merge_manual_delta "$host" "$generated" "$out"
 done
 
 backup="${NGINX_SITE_DIR}.backup"
@@ -199,7 +263,6 @@ if [[ -d "$NGINX_SITE_DIR" ]]; then
   mv "$NGINX_SITE_DIR" "$backup"
 fi
 mv "$stage" "$NGINX_SITE_DIR"
-trap - EXIT
 
 if [[ "${SKIP_NGINX_TEST:-0}" != 1 ]] && ! "$NGINX_BIN" -t -c "$NGINX_CONF"; then
   rm -rf "$NGINX_SITE_DIR"
@@ -209,3 +272,13 @@ if [[ "${SKIP_NGINX_TEST:-0}" != 1 ]] && ! "$NGINX_BIN" -t -c "$NGINX_CONF"; the
 fi
 
 rm -rf "$backup"
+
+baseline_backup="${NGINX_BASELINE_DIR}.backup"
+diff_backup="${NGINX_DIFF_DIR}.backup"
+rm -rf "$baseline_backup" "$diff_backup"
+[[ -d "$NGINX_BASELINE_DIR" ]] && mv "$NGINX_BASELINE_DIR" "$baseline_backup"
+[[ -d "$NGINX_DIFF_DIR" ]] && mv "$NGINX_DIFF_DIR" "$diff_backup"
+mv "$baseline_stage" "$NGINX_BASELINE_DIR"
+mv "$diff_stage" "$NGINX_DIFF_DIR"
+rm -rf "$baseline_backup" "$diff_backup"
+trap - EXIT

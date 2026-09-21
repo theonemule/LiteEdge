@@ -137,6 +137,8 @@ libcurl
 libstdc++
 libgcc
 zlib
+diffutils
+patch
 libmaxminddb
 EOF_RUNTIME
 {

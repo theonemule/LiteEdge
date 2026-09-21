@@ -163,6 +163,11 @@ All mutable application state and generated NGINX configuration live outside
 are transactional: generated NGINX configuration is validated before activation and
 state is rolled back if validation or reload fails.
 
+Per-site Advanced NGINX edits are tracked as a delta from the last generated baseline.
+When UI or certificate changes regenerate a site, LiteEdge uses a three-way merge to
+carry forward only the manual delta. Conflicts stop activation rather than overwriting
+manual changes. Per-site CRS rule IDs can also be disabled and re-enabled from the UI.
+
 ## Building a release
 
 A Docker engine is required. The build compiles ModSecurity and NGINX inside pinned

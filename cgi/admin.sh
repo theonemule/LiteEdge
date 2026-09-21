@@ -284,8 +284,10 @@ site_editor() {
 HTML
 
   if [[ "$exists" == 1 ]]; then
+    waf_rules_panel "$host"
     routes_panel "$host"
     certificate_panel "$host"
+    advanced_nginx_panel "$host"
   else
     cat <<'HTML'
 <div class="alert alert-info">Save the site first, then you can add path routes and configure certificates.</div>
@@ -368,6 +370,156 @@ HTML
         <button class="btn btn-outline-primary w-100" type="submit">Add</button>
       </div>
     </form>
+  </div>
+</div>
+HTML
+}
+
+waf_rules_panel() {
+  local host="$1" site waf rule_id disabled
+  site="$(site_file "$host")"
+  waf="$(kv_get "$site" WAF)"
+  disabled="$(disabled_waf_rules "$host")"
+
+  cat <<HTML
+<div class="card shadow-sm mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <strong>WAF rule overrides</strong>
+    <span class="badge $([[ "$waf" == 1 ]] && echo text-bg-success || echo text-bg-secondary)">$([[ "$waf" == 1 ]] && echo WAF-on || echo WAF-off)</span>
+  </div>
+  <div class="card-body">
+    <p class="text-secondary">OWASP CRS rules are enabled by default. Disable a specific rule ID only for this site; enabling it again removes the site-specific override.</p>
+HTML
+
+  if [[ "$waf" != 1 ]]; then
+    echo '<div class="alert alert-warning py-2">The WAF is currently disabled for this site. Overrides are retained and will apply if the WAF is enabled later.</div>'
+  fi
+
+  if [[ -z "$disabled" ]]; then
+    echo '<p class="small text-secondary mb-3">No CRS rules are disabled for this site.</p>'
+  else
+    cat <<'HTML'
+    <div class="table-responsive mb-3">
+      <table class="table table-sm align-middle">
+        <thead><tr><th>Disabled rule ID</th><th class="text-end">Action</th></tr></thead>
+        <tbody>
+HTML
+    while IFS= read -r rule_id; do
+      [[ -n "$rule_id" ]] || continue
+      cat <<HTML
+<tr>
+  <td><code>$(html_escape "$rule_id")</code></td>
+  <td class="text-end">
+    <form method="post" action="/admin/waf/enable">
+      <input type="hidden" name="host" value="$(html_escape "$host")">
+      <input type="hidden" name="rule_id" value="$(html_escape "$rule_id")">
+      <button class="btn btn-sm btn-outline-success" type="submit">Enable</button>
+    </form>
+  </td>
+</tr>
+HTML
+    done <<< "$disabled"
+    cat <<'HTML'
+        </tbody>
+      </table>
+    </div>
+HTML
+  fi
+
+  cat <<HTML
+    <form method="post" action="/admin/waf/disable" class="row g-2 align-items-end">
+      <input type="hidden" name="host" value="$(html_escape "$host")">
+      <div class="col-md-5">
+        <label class="form-label">CRS rule ID</label>
+        <input class="form-control font-monospace" name="rule_id" inputmode="numeric" pattern="[0-9]{1,9}" placeholder="942100" required>
+      </div>
+      <div class="col-md-auto">
+        <button class="btn btn-outline-danger" type="submit">Disable rule</button>
+      </div>
+    </form>
+  </div>
+</div>
+HTML
+}
+
+advanced_nginx_panel() {
+  local host="$1" current baseline generated_diff conflict effective manual_diff status
+  current="$(site_nginx_file "$host")"
+  baseline="$(site_nginx_baseline "$host")"
+  generated_diff="$(site_nginx_diff "$host")"
+  conflict="$(site_nginx_conflict "$host")"
+
+  effective=""
+  [[ -f "$current" ]] && effective="$(cat "$current")"
+
+  manual_diff=""
+  if [[ -s "$baseline" && -s "$current" ]] && ! cmp -s "$baseline" "$current"; then
+    manual_diff="$(diff -u --label 'generated baseline' --label 'effective config' "$baseline" "$current" || true)"
+    status="Customized"
+  else
+    status="Generated"
+  fi
+
+  cat <<HTML
+<div class="card shadow-sm mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <strong>Advanced NGINX</strong>
+    <span class="badge $([[ "$status" == Customized ]] && echo text-bg-warning || echo 'text-bg-light border')">$(html_escape "$status")</span>
+  </div>
+  <div class="card-body">
+    <p class="text-secondary">Edit this site's effective NGINX configuration for settings not exposed elsewhere in the UI. LiteEdge preserves your delta across future UI changes and certificate updates with a three-way merge.</p>
+HTML
+
+  if ! command -v diff3 >/dev/null 2>&1 || ! command -v patch >/dev/null 2>&1; then
+    echo '<div class="alert alert-warning">Manual edits can be saved now, but automatic delta merging requires the Alpine <code>diffutils</code> and <code>patch</code> packages.</div>'
+  fi
+
+  if [[ -s "$conflict" ]]; then
+    cat <<HTML
+    <div class="alert alert-danger">
+      <strong>Merge conflict detected.</strong> A newly generated configuration overlapped a manual edit. The previous active configuration was left in place.
+    </div>
+    <details class="mb-3">
+      <summary class="fw-semibold">Show merge conflict</summary>
+      <pre class="small bg-dark text-light border rounded p-3 mt-2 overflow-auto" style="max-height: 24rem;">$(html_escape "$(cat "$conflict")")</pre>
+    </details>
+HTML
+  fi
+
+  if [[ -n "$manual_diff" ]]; then
+    cat <<HTML
+    <details class="mb-3">
+      <summary class="fw-semibold">Manual delta</summary>
+      <pre class="small bg-body-tertiary border rounded p-3 mt-2 overflow-auto" style="max-height: 24rem;">$(html_escape "$manual_diff")</pre>
+    </details>
+HTML
+  fi
+
+  if [[ -s "$generated_diff" ]]; then
+    cat <<HTML
+    <details class="mb-3">
+      <summary class="fw-semibold">Last generated change</summary>
+      <div class="form-text mb-2">This is the generated baseline delta from the last successful regeneration, such as adding TLS settings after a certificate is issued.</div>
+      <pre class="small bg-body-tertiary border rounded p-3 mt-2 overflow-auto" style="max-height: 24rem;">$(html_escape "$(cat "$generated_diff")")</pre>
+    </details>
+HTML
+  fi
+
+  cat <<HTML
+    <details>
+      <summary class="fw-semibold">Edit effective configuration</summary>
+      <form method="post" action="/admin/config/save" class="mt-3">
+        <input type="hidden" name="host" value="$(html_escape "$host")">
+        <label class="form-label">Effective site configuration</label>
+        <textarea class="form-control font-monospace" name="config" rows="26" spellcheck="false" required>$(html_escape "$effective")</textarea>
+        <div class="form-text">Save validates the complete NGINX configuration before reload. Invalid edits are rolled back automatically.</div>
+        <button class="btn btn-primary mt-3" type="submit">Validate &amp; save config</button>
+      </form>
+      <form method="post" action="/admin/config/reset" class="mt-2">
+        <input type="hidden" name="host" value="$(html_escape "$host")">
+        <button class="btn btn-outline-secondary" type="submit">Reset to generated</button>
+      </form>
+    </details>
   </div>
 </div>
 HTML
@@ -498,6 +650,35 @@ handle_post() {
       redirect "/admin/site?host=$host"
       ;;
 
+    /admin/waf/disable)
+      host="${PARAM[host]:-}"
+      run_or_error /opt/liteedge/bin/sitectl.sh waf-disable "$host" "${PARAM[rule_id]:-}"
+      redirect "/admin/site?host=$host"
+      ;;
+
+    /admin/waf/enable)
+      host="${PARAM[host]:-}"
+      run_or_error /opt/liteedge/bin/sitectl.sh waf-enable "$host" "${PARAM[rule_id]:-}"
+      redirect "/admin/site?host=$host"
+      ;;
+
+    /admin/config/save)
+      host="${PARAM[host]:-}"
+      tmpdir="$(mktemp -d)"
+      trap 'rm -rf "$tmpdir"' EXIT
+      printf '%s\n' "${PARAM[config]:-}" > "$tmpdir/site.conf"
+      run_or_error /opt/liteedge/bin/sitectl.sh config-save "$host" "$tmpdir/site.conf"
+      rm -rf "$tmpdir"
+      trap - EXIT
+      redirect "/admin/site?host=$host"
+      ;;
+
+    /admin/config/reset)
+      host="${PARAM[host]:-}"
+      run_or_error /opt/liteedge/bin/sitectl.sh config-reset "$host"
+      redirect "/admin/site?host=$host"
+      ;;
+
     *)
       error_page "Unknown action."
       ;;
@@ -524,7 +705,7 @@ case "$path" in
   /admin/site)
     site_editor
     ;;
-  /admin/site/save|/admin/site/delete|/admin/route/add|/admin/route/delete|/admin/cert/selfsigned|/admin/cert/letsencrypt|/admin/cert/import)
+  /admin/site/save|/admin/site/delete|/admin/route/add|/admin/route/delete|/admin/cert/selfsigned|/admin/cert/letsencrypt|/admin/cert/import|/admin/waf/disable|/admin/waf/enable|/admin/config/save|/admin/config/reset)
     handle_post "$path"
     ;;
   *)
