@@ -37,6 +37,11 @@ VOLUME ["/data"]
 EXPOSE 8080 8443
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD test "$(curl -k -s -o /dev/null -w '%{http_code}' https://127.0.0.1:8443/)" = "401"
+  CMD if [ "${LITEEDGE_ADMIN_HTTP_ONLY:-0}" = "1" ]; then \
+        code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/)"; \
+      else \
+        code="$(curl -k -s -o /dev/null -w '%{http_code}' https://127.0.0.1:8443/)"; \
+      fi; \
+      test "$code" = "401"
 
 ENTRYPOINT ["/opt/liteedge/entrypoint.sh"]

@@ -1,39 +1,41 @@
 (() => {
   function showStatus(form, message, isError) {
-    let status = form.querySelector(".bundle-import-status");
+    let status = form.querySelector(".upload-status");
     if (!status) {
       status = document.createElement("div");
-      status.className = "bundle-import-status mt-2 small";
+      status.className = "upload-status mt-2 small";
       form.appendChild(status);
     }
-    status.className = "bundle-import-status mt-2 small " + (isError ? "text-danger" : "text-success");
+    status.className = "upload-status mt-2 small " + (isError ? "text-danger" : "text-success");
     status.textContent = message;
   }
 
-  document.addEventListener("submit", async (event) => {
-    const form = event.target.closest(".bundle-import-form");
-    if (!form) return;
+  document.addEventListener("click", (event) => {
+    const opener = event.target.closest("[data-dialog-open]");
+    if (opener) {
+      const dialog = document.getElementById(opener.dataset.dialogOpen);
+      if (dialog && typeof dialog.showModal === "function") dialog.showModal();
+      return;
+    }
+    const closer = event.target.closest("[data-dialog-close]");
+    if (closer) {
+      const dialog = closer.closest("dialog");
+      if (dialog) dialog.close();
+    }
+  });
 
-    event.preventDefault();
+  async function uploadRaw(form, endpoint) {
     const fileInput = form.querySelector('input[type="file"]');
     const file = fileInput && fileInput.files && fileInput.files[0];
     if (!file) {
-      showStatus(form, "Choose a LiteEdge bundle first.", true);
+      showStatus(form, "Choose a bundle first.", true);
       return;
     }
-
-    const params = new URLSearchParams();
-    params.set("scope", form.dataset.scope || "");
-    if (form.dataset.host) params.set("host", form.dataset.host);
-    const certBox = form.querySelector('input[name="certificates"]');
-    params.set("certificates", certBox && certBox.checked ? "1" : "0");
-
     const button = form.querySelector('button[type="submit"]');
     if (button) button.disabled = true;
-    showStatus(form, "Importing and validating bundle…", false);
-
+    showStatus(form, "Importing and validating…", false);
     try {
-      const response = await fetch("/admin/import?" + params.toString(), {
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: {"Content-Type": "application/octet-stream"},
         body: file
@@ -46,6 +48,24 @@
       showStatus(form, error.message || String(error), true);
     } finally {
       if (button) button.disabled = false;
+    }
+  }
+
+  document.addEventListener("submit", async (event) => {
+    const siteForm = event.target.closest(".bundle-import-form");
+    if (siteForm) {
+      event.preventDefault();
+      const params = new URLSearchParams();
+      const certBox = siteForm.querySelector('input[name="certificates"]');
+      params.set("certificates", certBox && certBox.checked ? "1" : "0");
+      await uploadRaw(siteForm, "/admin/import?" + params.toString());
+      return;
+    }
+
+    const wafForm = event.target.closest(".waf-import-form");
+    if (wafForm) {
+      event.preventDefault();
+      await uploadRaw(wafForm, "/admin/owasp/import");
     }
   });
 })();

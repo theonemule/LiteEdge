@@ -15,8 +15,13 @@ NGINX_DIFF_DIR="${NGINX_DIFF_DIR:-$NGINX_DIR/diffs}"
 NGINX_CONFLICT_DIR="${NGINX_CONFLICT_DIR:-$NGINX_DIR/conflicts}"
 NGINX_CONF="${NGINX_CONF:-$NGINX_DIR/nginx.conf}"
 NGINX_BIN="${NGINX_BIN:-/opt/liteedge/sbin/nginx}"
+WAF_DIR="${WAF_DIR:-$DATA_DIR/waf}"
+WAF_CUSTOM_DIR="${WAF_CUSTOM_DIR:-$WAF_DIR/custom}"
+WAF_DISABLED_FILE="${WAF_DISABLED_FILE:-$WAF_DIR/disabled-rules}"
+WAF_SETTINGS_FILE="${WAF_SETTINGS_FILE:-$WAF_DIR/settings.conf}"
+SERVER_SETTINGS_FILE="${SERVER_SETTINGS_FILE:-$DATA_DIR/server-settings.conf}"
 
-mkdir -p   "$SITE_DIR" "$CERT_DIR"   "$ACME_DIR/challenges/.well-known/acme-challenge" "$ACME_DIR/certs"   "$NGINX_SITE_DIR" "$NGINX_BASELINE_DIR" "$NGINX_DIFF_DIR" "$NGINX_CONFLICT_DIR"
+mkdir -p   "$SITE_DIR" "$CERT_DIR"   "$ACME_DIR/challenges/.well-known/acme-challenge" "$ACME_DIR/certs"   "$NGINX_SITE_DIR" "$NGINX_BASELINE_DIR" "$NGINX_DIFF_DIR" "$NGINX_CONFLICT_DIR"   "$WAF_DIR" "$WAF_CUSTOM_DIR"
 
 die() {
   echo "$*" >&2
@@ -75,6 +80,10 @@ validate_root() {
   esac
 }
 
+validate_waf_profile() {
+  case "$1" in generic|wordpress) ;; *) die "Invalid WAF application profile." ;; esac
+}
+
 validate_route_match() {
   case "$1" in prefix|exact|regex) ;; *) die "Invalid route match type." ;; esac
 }
@@ -96,6 +105,39 @@ disabled_waf_rules() {
   file="$(waf_rule_file "$1")"
   [[ -f "$file" ]] || return 0
   grep -E '^[0-9]{1,9}$' "$file" | sort -n -u
+}
+
+
+validate_timeout() {
+  if [[ ! "${1:-}" =~ ^[0-9]+$ ]] || (( 10#${1} < 1 || 10#${1} > 86400 )); then
+    die "Timeout must be between 1 and 86400 seconds."
+  fi
+}
+
+server_setting_get() {
+  local key="$1" default="${2:-}" value=""
+  if [[ -f "$SERVER_SETTINGS_FILE" ]]; then
+    value="$(kv_get "$SERVER_SETTINGS_FILE" "$key")"
+  fi
+  printf '%s' "${value:-$default}"
+}
+
+waf_setting_get() {
+  local key="$1" default="${2:-}" value=""
+  if [[ -f "$WAF_SETTINGS_FILE" ]]; then
+    value="$(kv_get "$WAF_SETTINGS_FILE" "$key")"
+  fi
+  printf '%s' "${value:-$default}"
+}
+
+global_disabled_waf_rules() {
+  [[ -f "$WAF_DISABLED_FILE" ]] || return 0
+  grep -E '^[0-9]{1,9}$' "$WAF_DISABLED_FILE" | sort -n -u
+}
+
+custom_waf_rule_file() {
+  validate_rule_id "$1"
+  printf '%s/%s.conf' "$WAF_CUSTOM_DIR" "$1"
 }
 
 reload_nginx() {

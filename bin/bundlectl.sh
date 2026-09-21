@@ -117,36 +117,38 @@ materialize_portable_root() {
 
 validate_site_state_file() {
   local file="$1" expected_slug="$2"
-  local host mode upstream root aliases force_https waf websocket slug
+  local host aliases slug mode upstream root force_https waf websocket
   host="$(kv_get "$file" HOST)"
   validate_host "$host"
   slug="$(slug_for_host "$host")"
   [[ "$slug" == "$expected_slug" ]] || die "Site filename does not match its host: $host"
 
-  mode="$(kv_get "$file" MODE)"
-  upstream="$(kv_get "$file" UPSTREAM)"
-  root="$(kv_get "$file" ROOT)"
   aliases="$(kv_get "$file" ALIASES)"
-  force_https="$(kv_get "$file" FORCE_HTTPS)"
-  waf="$(kv_get "$file" WAF)"
-  websocket="$(kv_get "$file" WEBSOCKET)"
-
-  validate_mode "$mode"
   validate_aliases "$aliases"
-  [[ "$force_https" =~ ^[01]$ && "$waf" =~ ^[01]$ && "$websocket" =~ ^[01]$ ]] ||
-    die "Invalid boolean setting in bundle for $host."
 
-  if [[ "$mode" == static ]]; then
-    validate_root "$root"
-  else
-    validate_upstream "$upstream"
+  # Backward compatibility for pre-route-model bundles.
+  mode="$(kv_get "$file" MODE)"
+  if [[ -n "$mode" ]]; then
+    upstream="$(kv_get "$file" UPSTREAM)"
+    root="$(kv_get "$file" ROOT)"
+    force_https="$(kv_get "$file" FORCE_HTTPS)"
+    waf="$(kv_get "$file" WAF)"
+    websocket="$(kv_get "$file" WEBSOCKET)"
+    validate_mode "$mode"
+    [[ "$force_https" =~ ^[01]$ && "$waf" =~ ^[01]$ && "$websocket" =~ ^[01]$ ]] ||
+      die "Invalid legacy boolean setting in bundle for $host."
+    if [[ "$mode" == static ]]; then
+      validate_root "$root"
+    else
+      validate_upstream "$upstream"
+    fi
   fi
 
   printf '%s\n' "$host"
 }
 
 validate_routes_for_slug() {
-  local root="$1" slug="$2" route id match path target websocket expected_id
+  local root="$1" slug="$2" route id match path target websocket timeout waf force_https profile expected_id
   [[ -d "$root/routes/$slug" ]] || return 0
   shopt -s nullglob
   for route in "$root/routes/$slug"/*.route; do
@@ -155,10 +157,20 @@ validate_routes_for_slug() {
     path="$(kv_get "$route" PATH)"
     target="$(kv_get "$route" TARGET)"
     websocket="$(kv_get "$route" WEBSOCKET)"
+    timeout="$(kv_get "$route" TIMEOUT)"
+    waf="$(kv_get "$route" WAF)"
+    force_https="$(kv_get "$route" FORCE_HTTPS)"
+    profile="$(kv_get "$route" PROFILE)"
+
     validate_route_match "$match"
     validate_route_path "$path"
     validate_upstream "$target"
-    [[ "$websocket" =~ ^[01]$ ]] || die "Invalid WebSocket route setting."
+    [[ -z "$websocket" || "$websocket" =~ ^[01]$ ]] || die "Invalid WebSocket route setting."
+    [[ -z "$timeout" ]] || validate_timeout "$timeout"
+    [[ -z "$waf" || "$waf" =~ ^[01]$ ]] || die "Invalid WAF route setting."
+    [[ -z "$force_https" || "$force_https" =~ ^[01]$ ]] || die "Invalid HTTPS redirect route setting."
+    [[ -z "$profile" ]] || validate_waf_profile "$profile"
+
     expected_id="$(printf '%s\n%s\n%s' "$match" "$path" "$target" | sha256sum | cut -c1-16)"
     [[ "$id" == "$expected_id" && "$(basename "$route")" == "$id.route" ]] ||
       die "Invalid route identifier in bundle."

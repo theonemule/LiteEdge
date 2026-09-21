@@ -45,6 +45,103 @@ validate_known_site() {
   [[ -f "$(site_file "$1")" ]] || die "Unknown site."
 }
 
+legacy_default_to_route() {
+  local host="$1" file="$2"
+  local mode upstream websocket waf force_https timeout dir id
+  mode="$(kv_get "$file" MODE)"
+  upstream="$(kv_get "$file" UPSTREAM)"
+  [[ "$mode" == proxy || "$mode" == wordpress ]] || return 0
+  [[ -n "$upstream" ]] || return 0
+  validate_upstream "$upstream"
+
+  websocket="$(kv_get "$file" WEBSOCKET)"
+  waf="$(kv_get "$file" WAF)"
+  force_https="$(kv_get "$file" FORCE_HTTPS)"
+  [[ "$websocket" =~ ^[01]$ ]] || websocket=0
+  [[ "$waf" =~ ^[01]$ ]] || waf=1
+  [[ "$force_https" =~ ^[01]$ ]] || force_https=0
+  timeout="$(server_setting_get DEFAULT_ROUTE_TIMEOUT 60)"
+  validate_timeout "$timeout"
+
+  dir="$(route_dir "$host")"
+  mkdir -p "$dir"
+  id="$(printf '%s\n%s\n%s' prefix / "$upstream" | sha256sum | cut -c1-16)"
+  if [[ ! -f "$dir/$id.route" ]]; then
+    {
+      printf 'ID=%s\n' "$id"
+      printf 'MATCH=prefix\n'
+      printf 'PATH=/\n'
+      printf 'TARGET=%s\n' "$upstream"
+      printf 'WEBSOCKET=%s\n' "$websocket"
+      printf 'TIMEOUT=%s\n' "$timeout"
+      printf 'WAF=%s\n' "$waf"
+      printf 'FORCE_HTTPS=%s\n' "$force_https"
+      printf 'PROFILE=%s\n' "$([[ "$mode" == wordpress ]] && echo wordpress || echo generic)"
+    } > "$dir/$id.route"
+  fi
+}
+
+save_host_only() {
+  local host="$1" aliases="$2" file tmp mode
+  validate_host "$host"
+  validate_aliases "$aliases"
+  file="$(site_file "$host")"
+
+  snapshot_state
+  if [[ -f "$file" ]]; then
+    mode="$(kv_get "$file" MODE)"
+    if [[ "$mode" == proxy || "$mode" == wordpress ]]; then
+      legacy_default_to_route "$host" "$file"
+    fi
+  fi
+
+  tmp="$(mktemp)"
+  {
+    printf 'HOST=%s\n' "$host"
+    printf 'ALIASES=%s\n' "${aliases//,/ }"
+  } > "$tmp"
+  mv "$tmp" "$file"
+  mkdir -p "$(route_dir "$host")"
+  apply_state
+}
+
+save_legacy() {
+  local host="$1" mode="$2" upstream="$3" root="$4" aliases="$5"
+  local force_https="$6" waf="$7" websocket="$8" slug file tmp
+  validate_host "$host"
+  validate_mode "$mode"
+  validate_aliases "$aliases"
+  force_https="$(bool_value "$force_https")"
+  waf="$(bool_value "$waf")"
+  websocket="$(bool_value "$websocket")"
+  slug="$(slug_for_host "$host")"
+  [[ -n "$root" ]] || root="$DATA_DIR/www/$slug"
+  if [[ "$mode" == static ]]; then
+    validate_root "$root"
+    mkdir -p "$root"
+    chmod 755 "$root"
+  else
+    validate_upstream "$upstream"
+  fi
+
+  snapshot_state
+  file="$(site_file "$host")"
+  tmp="$(mktemp)"
+  {
+    printf 'HOST=%s\n' "$host"
+    printf 'MODE=%s\n' "$mode"
+    printf 'UPSTREAM=%s\n' "$upstream"
+    printf 'ROOT=%s\n' "$root"
+    printf 'ALIASES=%s\n' "${aliases//,/ }"
+    printf 'FORCE_HTTPS=%s\n' "$force_https"
+    printf 'WAF=%s\n' "$waf"
+    printf 'WEBSOCKET=%s\n' "$websocket"
+  } > "$tmp"
+  mv "$tmp" "$file"
+  mkdir -p "$(route_dir "$host")"
+  apply_state
+}
+
 save_effective_config() {
   local host="$1" source="$2" current backup
   validate_known_site "$host"
@@ -61,59 +158,22 @@ save_effective_config() {
     rm -f "$backup"
     die "NGINX rejected the manual configuration. The previous site configuration was restored."
   fi
-
   if ! reload_nginx; then
     cp "$backup" "$current"
     reload_nginx >/dev/null 2>&1 || true
     rm -f "$backup"
     die "NGINX reload failed. The previous site configuration was restored."
   fi
-
   rm -f "$backup" "$(site_nginx_conflict "$host")"
 }
 
 case "$cmd" in
   save)
-    host="${1:-}"
-    mode="${2:-proxy}"
-    upstream="${3:-}"
-    root="${4:-}"
-    aliases="${5:-}"
-    force_https="$(bool_value "${6:-0}")"
-    waf="$(bool_value "${7:-1}")"
-    websocket="$(bool_value "${8:-0}")"
-
-    validate_host "$host"
-    validate_mode "$mode"
-    validate_aliases "$aliases"
-
-    slug="$(slug_for_host "$host")"
-    [[ -n "$root" ]] || root="$DATA_DIR/www/$slug"
-
-    if [[ "$mode" == static ]]; then
-      validate_root "$root"
-      mkdir -p "$root"
-      chmod 755 "$root"
+    if [[ $# -ge 8 ]]; then
+      save_legacy "$@"
     else
-      validate_upstream "$upstream"
+      save_host_only "${1:-}" "${2:-}"
     fi
-
-    snapshot_state
-    file="$(site_file "$host")"
-    tmp="$(mktemp)"
-    {
-      printf 'HOST=%s\n' "$host"
-      printf 'MODE=%s\n' "$mode"
-      printf 'UPSTREAM=%s\n' "$upstream"
-      printf 'ROOT=%s\n' "$root"
-      printf 'ALIASES=%s\n' "${aliases//,/ }"
-      printf 'FORCE_HTTPS=%s\n' "$force_https"
-      printf 'WAF=%s\n' "$waf"
-      printf 'WEBSOCKET=%s\n' "$websocket"
-    } > "$tmp"
-    mv "$tmp" "$file"
-    mkdir -p "$(route_dir "$host")"
-    apply_state
     ;;
 
   delete)
@@ -126,17 +186,31 @@ case "$cmd" in
     apply_state
     ;;
 
-  route-add)
+  route-add|route-save)
+    old_id=""
+    if [[ "$cmd" == route-save ]]; then
+      old_id="${1:-}"
+      shift || true
+    fi
     host="${1:-}"
     match="${2:-prefix}"
     path="${3:-/}"
     target="${4:-}"
-    websocket="$(bool_value "${5:-0}")"
+    websocket="$(bool_value "${5:-1}")"
+    timeout="${6:-$(server_setting_get DEFAULT_ROUTE_TIMEOUT 60)}"
+    waf="$(bool_value "${7:-1}")"
+    force_https="$(bool_value "${8:-1}")"
+    profile="${9:-generic}"
 
     validate_known_site "$host"
     validate_route_match "$match"
     validate_route_path "$path"
     validate_upstream "$target"
+    validate_timeout "$timeout"
+    validate_waf_profile "$profile"
+    if [[ -n "$old_id" && ! "$old_id" =~ ^[a-f0-9]{16}$ ]]; then
+      die "Invalid route id."
+    fi
 
     snapshot_state
     dir="$(route_dir "$host")"
@@ -148,7 +222,14 @@ case "$cmd" in
       printf 'PATH=%s\n' "$path"
       printf 'TARGET=%s\n' "$target"
       printf 'WEBSOCKET=%s\n' "$websocket"
+      printf 'TIMEOUT=%s\n' "$timeout"
+      printf 'WAF=%s\n' "$waf"
+      printf 'FORCE_HTTPS=%s\n' "$force_https"
+      printf 'PROFILE=%s\n' "$profile"
     } > "$dir/$id.route"
+    if [[ -n "$old_id" && "$old_id" != "$id" ]]; then
+      rm -f "$dir/$old_id.route"
+    fi
     apply_state
     ;;
 
@@ -230,12 +311,13 @@ case "$cmd" in
     ;;
 
   *)
-    cat >&2 <<USAGE
+    cat >&2 <<'USAGE'
 Usage:
-  sitectl.sh save HOST MODE UPSTREAM ROOT ALIASES FORCE_HTTPS WAF WEBSOCKET
-  sitectl.sh delete HOST
-  sitectl.sh route-add HOST MATCH PATH TARGET WEBSOCKET
+  sitectl.sh save HOST ALIASES
+  sitectl.sh route-add HOST MATCH PATH TARGET WEBSOCKET TIMEOUT WAF FORCE_HTTPS PROFILE
+  sitectl.sh route-save OLD_ID HOST MATCH PATH TARGET WEBSOCKET TIMEOUT WAF FORCE_HTTPS PROFILE
   sitectl.sh route-delete HOST ROUTE_ID
+  sitectl.sh delete HOST
   sitectl.sh waf-disable HOST RULE_ID
   sitectl.sh waf-enable HOST RULE_ID
   sitectl.sh config-save HOST FILE
