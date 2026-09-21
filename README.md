@@ -168,6 +168,12 @@ When UI or certificate changes regenerate a site, LiteEdge uses a three-way merg
 carry forward only the manual delta. Conflicts stop activation rather than overwriting
 manual changes. Per-site CRS rule IDs can also be disabled and re-enabled from the UI.
 
+Sites can be exported and imported as portable `.tar.gz` bundles. A bundle contains
+site settings, routes, WAF overrides, and the Advanced NGINX manual delta rather than
+generated NGINX files. Site or all-sites exports can optionally include active
+certificates and private keys. Imports are transactional and certificates are only
+replaced when certificate import is explicitly selected.
+
 ## Building a release
 
 A Docker engine is required. The build compiles ModSecurity and NGINX inside pinned

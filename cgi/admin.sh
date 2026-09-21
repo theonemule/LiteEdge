@@ -64,6 +64,7 @@ page_head() {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>$title - LiteEdge</title>
   <link href="/assets/bootstrap.min.css" rel="stylesheet">
+  <script src="/assets/admin.js" defer></script>
 </head>
 <body class="bg-body-tertiary">
 <nav class="navbar navbar-expand-lg bg-dark navbar-dark mb-4">
@@ -141,6 +142,56 @@ dashboard() {
   </div>
   <a class="btn btn-primary" href="/admin/site">Add site</a>
 </div>
+<div class="card shadow-sm mb-4">
+  <div class="card-header"><strong>Import / export all sites</strong></div>
+  <div class="card-body">
+    <p class="text-secondary">Export every site's settings, routes, WAF overrides, and Advanced NGINX deltas. Certificates and private keys are optional.</p>
+    <div class="d-flex flex-wrap gap-2 mb-4">
+      <a class="btn btn-outline-primary" href="/admin/export?scope=all&certificates=0">Export all settings</a>
+      <a class="btn btn-outline-warning" href="/admin/export?scope=all&certificates=1">Export all + certificates</a>
+    </div>
+    <form class="bundle-import-form border rounded p-3 mb-3" data-scope="site" data-redirect="/">
+      <h2 class="h6">Import one site</h2>
+      <p class="small text-secondary">Import a site bundle into this LiteEdge instance. The bundle's host name identifies the site to create or replace.</p>
+      <div class="row g-3 align-items-end">
+        <div class="col-lg-7">
+          <label class="form-label">LiteEdge site bundle</label>
+          <input class="form-control" type="file" accept=".tar.gz,.tgz,application/gzip" required>
+        </div>
+        <div class="col-lg-3">
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" name="certificates" value="1" id="import_one_certs">
+            <label class="form-check-label" for="import_one_certs">Import certificate and private key</label>
+          </div>
+        </div>
+        <div class="col-lg-2">
+          <button class="btn btn-primary w-100" type="submit">Import site</button>
+        </div>
+      </div>
+    </form>
+
+    <form class="bundle-import-form border rounded p-3" data-scope="all" data-redirect="/">
+      <h2 class="h6">Import all sites</h2>
+      <p class="small text-secondary">This replaces the full set of site settings with the bundle. Existing site certificates are left alone unless certificate import is enabled.</p>
+      <div class="row g-3 align-items-end">
+        <div class="col-lg-7">
+          <label class="form-label">LiteEdge bundle</label>
+          <input class="form-control" type="file" accept=".tar.gz,.tgz,application/gzip" required>
+        </div>
+        <div class="col-lg-3">
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" name="certificates" value="1" id="import_all_certs">
+            <label class="form-check-label" for="import_all_certs">Import certificates and private keys</label>
+          </div>
+        </div>
+        <div class="col-lg-2">
+          <button class="btn btn-primary w-100" type="submit">Import all</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
 <div class="card shadow-sm">
   <div class="table-responsive">
     <table class="table table-hover align-middle mb-0">
@@ -287,6 +338,7 @@ HTML
     waf_rules_panel "$host"
     routes_panel "$host"
     certificate_panel "$host"
+    transfer_panel "$host"
     advanced_nginx_panel "$host"
   else
     cat <<'HTML'
@@ -442,6 +494,42 @@ HTML
 HTML
 }
 
+transfer_panel() {
+  local host="$1" slug
+  slug="$(slug_for_host "$host")"
+  cat <<HTML
+<div class="card shadow-sm mb-4">
+  <div class="card-header"><strong>Import / export site</strong></div>
+  <div class="card-body">
+    <p class="text-secondary">Move this site's settings, routes, WAF overrides, and Advanced NGINX delta between LiteEdge instances. Certificate and private-key export is optional.</p>
+    <div class="d-flex flex-wrap gap-2 mb-4">
+      <a class="btn btn-outline-primary" href="/admin/export?scope=site&amp;host=$(html_escape "$host")&amp;certificates=0">Export settings</a>
+      <a class="btn btn-outline-warning" href="/admin/export?scope=site&amp;host=$(html_escape "$host")&amp;certificates=1">Export settings + certificate</a>
+    </div>
+    <form class="bundle-import-form border rounded p-3" data-scope="site" data-host="$(html_escape "$host")" data-redirect="/admin/site?host=$(html_escape "$host")">
+      <h2 class="h6">Import this site</h2>
+      <p class="small text-secondary">The selected bundle must be a site bundle for <code>$(html_escape "$host")</code>. Existing certificates remain unless certificate import is enabled.</p>
+      <div class="row g-3 align-items-end">
+        <div class="col-lg-7">
+          <label class="form-label">LiteEdge site bundle</label>
+          <input class="form-control" type="file" accept=".tar.gz,.tgz,application/gzip" required>
+        </div>
+        <div class="col-lg-3">
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" name="certificates" value="1" id="import_site_certs_$slug">
+            <label class="form-check-label" for="import_site_certs_$slug">Import certificate and private key</label>
+          </div>
+        </div>
+        <div class="col-lg-2">
+          <button class="btn btn-primary w-100" type="submit">Import site</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+HTML
+}
+
 advanced_nginx_panel() {
   local host="$1" current baseline generated_diff conflict effective manual_diff status
   current="$(site_nginx_file "$host")"
@@ -584,6 +672,88 @@ HTML
 HTML
 }
 
+handle_export() {
+  local scope="${PARAM[scope]:-}" host="${PARAM[host]:-}" certificates tmp file filename slug
+  certificates="$(bool_value "${PARAM[certificates]:-0}")"
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  file="$tmp/bundle.tar.gz"
+
+  case "$scope" in
+    site)
+      validate_host "$host" 2>/dev/null || error_page "Invalid site host."
+      slug="$(slug_for_host "$host")"
+      run_or_error /opt/liteedge/bin/bundlectl.sh export-site "$host" "$certificates" "$file"
+      filename="liteedge-site-${slug}$([[ "$certificates" == 1 ]] && printf '%s' '-with-certs').tar.gz"
+      ;;
+    all)
+      run_or_error /opt/liteedge/bin/bundlectl.sh export-all "$certificates" "$file"
+      filename="liteedge-all-sites$([[ "$certificates" == 1 ]] && printf '%s' '-with-certs').tar.gz"
+      ;;
+    *) error_page "Invalid export scope." ;;
+  esac
+
+  printf 'Content-Type: application/gzip\r\n'
+  printf 'Content-Disposition: attachment; filename="%s"\r\n' "$filename"
+  printf 'Content-Length: %s\r\n' "$(wc -c < "$file" | tr -d ' ')"
+  printf 'Cache-Control: no-store\r\n'
+  printf 'X-Content-Type-Options: nosniff\r\n\r\n'
+  cat "$file"
+  rm -rf "$tmp"
+  trap - EXIT
+  exit 0
+}
+
+handle_raw_import() {
+  local scope="${PARAM[scope]:-}" host="${PARAM[host]:-}" certificates length tmp output size
+  [[ "${REQUEST_METHOD:-GET}" == POST ]] || {
+    printf 'Status: 405 Method Not Allowed\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nPOST required.\n'
+    exit 0
+  }
+
+  certificates="$(bool_value "${PARAM[certificates]:-0}")"
+  [[ "$scope" == site || "$scope" == all ]] || {
+    printf 'Status: 400 Bad Request\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nInvalid import scope.\n'
+    exit 0
+  }
+  if [[ "$scope" == site && -n "$host" ]]; then
+    validate_host "$host" 2>/dev/null || {
+      printf 'Status: 400 Bad Request\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nInvalid site host.\n'
+      exit 0
+    }
+  elif [[ "$scope" == all ]]; then
+    host=""
+  fi
+
+  length="${CONTENT_LENGTH:-0}"
+  [[ "$length" =~ ^[0-9]+$ ]] || length=0
+  if (( length < 1 || length > 33554432 )); then
+    printf 'Status: 413 Payload Too Large\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nBundle must be between 1 byte and 32 MiB.\n'
+    exit 0
+  fi
+
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  head -c "$length" > "$tmp/bundle.tar.gz"
+  size="$(wc -c < "$tmp/bundle.tar.gz" | tr -d ' ')"
+  if [[ "$size" != "$length" ]]; then
+    printf 'Status: 400 Bad Request\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nUpload ended before the declared request length.\n'
+    exit 0
+  fi
+
+  if ! output="$(/opt/liteedge/bin/bundlectl.sh import "$tmp/bundle.tar.gz" "$certificates" "$scope" "$host" 2>&1)"; then
+    printf 'Status: 400 Bad Request\r\nContent-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\n\r\n'
+    printf '%s\n' "$output"
+    exit 0
+  fi
+
+  printf 'Content-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\n\r\n'
+  printf '%s\n' "$output"
+  rm -rf "$tmp"
+  trap - EXIT
+  exit 0
+}
+
 handle_post() {
   local path="$1" host output tmpdir
   [[ "${REQUEST_METHOD:-GET}" == POST ]] || error_page "This action requires POST."
@@ -685,7 +855,15 @@ handle_post() {
   esac
 }
 
+path="${PATH_INFO:-/}"
 parse_params "${QUERY_STRING:-}"
+
+if [[ "$path" == /admin/export ]]; then
+  handle_export
+fi
+if [[ "$path" == /admin/import ]]; then
+  handle_raw_import
+fi
 
 if [[ "${REQUEST_METHOD:-GET}" == POST ]]; then
   length="${CONTENT_LENGTH:-0}"
@@ -695,8 +873,6 @@ if [[ "${REQUEST_METHOD:-GET}" == POST ]]; then
     parse_params "$body"
   fi
 fi
-
-path="${PATH_INFO:-/}"
 
 case "$path" in
   /|/admin|/admin/)
