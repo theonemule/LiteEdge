@@ -905,11 +905,19 @@ handle_export() {
       validate_host "$host" 2>/dev/null || error_page "Invalid site host."
       slug="$(slug_for_host "$host")"
       run_or_error /opt/liteedge/bin/bundlectl.sh export-site "$host" "$certificates" "$file"
-      filename="liteedge-site-${slug}$([[ "$certificates" == 1 ]] && printf '%s' '-with-certs').tar.gz"
+      if [[ "$certificates" == 1 ]]; then
+        filename="liteedge-site-${slug}-with-certs.tar.gz"
+      else
+        filename="liteedge-site-${slug}.tar.gz"
+      fi
       ;;
     all)
       run_or_error /opt/liteedge/bin/bundlectl.sh export-all "$certificates" "$file"
-      filename="liteedge-all-sites$([[ "$certificates" == 1 ]] && printf '%s' '-with-certs').tar.gz"
+      if [[ "$certificates" == 1 ]]; then
+        filename="liteedge-all-sites-with-certs.tar.gz"
+      else
+        filename="liteedge-all-sites.tar.gz"
+      fi
       ;;
     *) error_page "Invalid export scope." ;;
   esac
