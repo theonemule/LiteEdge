@@ -44,13 +44,15 @@ version tags.
 
 ## Features
 
-Each virtual host can use a Reverse Proxy, WordPress Hardened Proxy, or Local Static
-Content profile. Hosts can have aliases, enable or disable the WAF, redirect HTTP to
-HTTPS once a certificate exists, and enable WebSocket upgrades on the default
-upstream.
+Each virtual host defines its host name and aliases, while reverse-proxy behavior is
+owned by its routes. Routes support prefix, exact, and regex matches, separate upstream
+URLs, WebSocket upgrades, timeouts, and HTTP-to-HTTPS redirection.
 
-A host can override its default backend by path. Routes support prefix, exact, and
-regex matches, separate upstream URLs, and per-route WebSocket support.
+OWASP CRS policy is route-scoped. Each route can enable or disable the WAF, select
+PL1 through PL4, select installed CRS plugins and application rule-exclusion plugins,
+and maintain route-only disabled rule IDs. The OWASP page manages the shared CRS
+inventory, custom rules, global exclusions, and a cached catalog refreshed from the
+machine-readable OWASP CRS plugin registry.
 
 Each host supports three certificate modes:
 
@@ -127,6 +129,7 @@ In Docker, persistent state is under the ./data bind mount:
       acme/       ACME account, challenges, and issued certificates
       logs/       certificate renewal logs
       nginx/      generated runtime NGINX configuration
+      waf/        CRS defaults, registry cache, plugins, and custom rules
       www/        local static site content
 
 The UI never writes NGINX configuration directly. Shell utilities validate submitted
@@ -154,9 +157,9 @@ The management UI is protected by NGINX HTTP Basic Auth over HTTPS. HTTP request
 the management listener are redirected before authentication. The UI uses no
 client-side application framework and loads its Bootstrap stylesheet locally.
 
-Generated NGINX configuration receives baseline security headers. Site WAF mode uses
-ModSecurity with the bundled OWASP Core Rule Set. HTTPS virtual hosts use TLS 1.2
-and 1.3 plus HSTS.
+Generated NGINX configuration receives baseline security headers. Route WAF policies
+use ModSecurity with the bundled OWASP Core Rule Set and optional installed CRS
+plugins. HTTPS virtual hosts use TLS 1.2 and 1.3 plus HSTS.
 
 All mutable application state and generated NGINX configuration live outside
 /opt/liteedge. The release tree is immutable at runtime. Configuration mutations

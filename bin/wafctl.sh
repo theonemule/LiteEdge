@@ -13,7 +13,7 @@ snapshot_waf() {
 
 restore_waf() {
   rm -rf "$WAF_DIR"
-  mkdir -p "$WAF_CUSTOM_DIR"
+  mkdir -p "$WAF_CUSTOM_DIR" "$WAF_PLUGIN_DIR"
   cp -a "$WAF_BACKUP/." "$WAF_DIR/" 2>/dev/null || true
   /opt/liteedge/bin/render-runtime.sh >/dev/null 2>&1 || true
   /opt/liteedge/bin/render-nginx.sh >/dev/null 2>&1 || true
@@ -145,17 +145,20 @@ case "$cmd" in
     output="${1:-}"
     [[ -n "$output" ]] || die "Output path is required."
     ensure_settings
+    /opt/liteedge/bin/wafregistry.sh ensure >/dev/null 2>&1 || true
     tmp="$(mktemp -d)"
     trap 'rm -rf "$tmp"' EXIT
     root="$tmp/liteedge-waf"
-    mkdir -p "$root/custom"
+    mkdir -p "$root/custom" "$root/plugins"
     cat > "$root/manifest" <<'EOF'
 FORMAT=liteedge-waf-rules
-VERSION=1
+VERSION=2
 EOF
     cp "$WAF_SETTINGS_FILE" "$root/settings.conf"
     [[ -f "$WAF_DISABLED_FILE" ]] && cp "$WAF_DISABLED_FILE" "$root/disabled-rules"
+    [[ -f "$WAF_REGISTRY_FILE" ]] && cp "$WAF_REGISTRY_FILE" "$root/registry.tsv"
     cp -a "$WAF_CUSTOM_DIR/." "$root/custom/" 2>/dev/null || true
+    cp -a "$WAF_PLUGIN_DIR/." "$root/plugins/" 2>/dev/null || true
     tar -C "$tmp" -czf "$output" liteedge-waf
     chmod 600 "$output"
     ;;
@@ -168,8 +171,9 @@ EOF
     trap 'rm -rf "$tmp"' EXIT
     tar -xzf "$archive" -C "$tmp"
     root="$tmp/liteedge-waf"
-    [[ "$(kv_get "$root/manifest" FORMAT)" == liteedge-waf-rules && "$(kv_get "$root/manifest" VERSION)" == 1 ]] ||
-      die "Unsupported OWASP rules bundle."
+    version="$(kv_get "$root/manifest" VERSION)"
+    [[ "$(kv_get "$root/manifest" FORMAT)" == liteedge-waf-rules ]] || die "Unsupported OWASP rules bundle."
+    case "$version" in 1|2) ;; *) die "Unsupported OWASP rules bundle version." ;; esac
 
     pl="$(kv_get "$root/settings.conf" PARANOIA_LEVEL)"
     [[ -z "$pl" ]] && pl=1
@@ -189,12 +193,31 @@ EOF
       validate_custom_rule "$id" "$file"
     done
 
+    if [[ -d "$root/plugins" ]]; then
+      for file in "$root/plugins"/*; do
+        [[ -d "$file" ]] || continue
+        name="$(basename "$file")"
+        validate_plugin_name "$name"
+        [[ -d "$file/plugins" ]] || die "Imported plugin $name is missing its plugins directory."
+        find "$file/plugins" -type f -name '*.conf' -print -quit | grep -q . ||
+          die "Imported plugin $name contains no ModSecurity configuration."
+      done
+    fi
+
+    if [[ -f "$root/registry.tsv" ]]; then
+      head -n1 "$root/registry.tsv" | grep -qx $'NAME\tREPO\tTYPE\tSTATUS\tCATEGORY' ||
+        die "Imported plugin registry is invalid."
+    fi
+
     snapshot_waf
     rm -rf "$WAF_DIR"
-    mkdir -p "$WAF_CUSTOM_DIR"
+    mkdir -p "$WAF_CUSTOM_DIR" "$WAF_PLUGIN_DIR"
     printf 'PARANOIA_LEVEL=%s\n' "$pl" > "$WAF_SETTINGS_FILE"
     [[ -f "$root/disabled-rules" ]] && cp "$root/disabled-rules" "$WAF_DISABLED_FILE"
+    [[ -f "$root/registry.tsv" ]] && cp "$root/registry.tsv" "$WAF_REGISTRY_FILE"
     cp -a "$root/custom/." "$WAF_CUSTOM_DIR/" 2>/dev/null || true
+    cp -a "$root/plugins/." "$WAF_PLUGIN_DIR/" 2>/dev/null || true
+    /opt/liteedge/bin/wafregistry.sh ensure >/dev/null 2>&1 || true
     apply_waf
     rm -rf "$tmp"
     trap - EXIT

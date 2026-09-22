@@ -7,7 +7,7 @@ RUN apk add --no-cache \
       bash ca-certificates curl openssl \
       fcgiwrap spawn-fcgi \
       pcre2 libxml2 yajl lmdb libcurl libstdc++ libgcc zlib libmaxminddb \
-      coreutils diffutils patch lua5.3-libs \
+      coreutils diffutils patch lua5.3-libs jq \
     && addgroup -g 10001 -S liteedge \
     && adduser -S -D -H -u 10001 -G liteedge liteedge \
     && mkdir -p /data \

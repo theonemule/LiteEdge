@@ -19,9 +19,11 @@ WAF_DIR="${WAF_DIR:-$DATA_DIR/waf}"
 WAF_CUSTOM_DIR="${WAF_CUSTOM_DIR:-$WAF_DIR/custom}"
 WAF_DISABLED_FILE="${WAF_DISABLED_FILE:-$WAF_DIR/disabled-rules}"
 WAF_SETTINGS_FILE="${WAF_SETTINGS_FILE:-$WAF_DIR/settings.conf}"
+WAF_REGISTRY_FILE="${WAF_REGISTRY_FILE:-$WAF_DIR/registry.tsv}"
+WAF_PLUGIN_DIR="${WAF_PLUGIN_DIR:-$WAF_DIR/plugins}"
 SERVER_SETTINGS_FILE="${SERVER_SETTINGS_FILE:-$DATA_DIR/server-settings.conf}"
 
-mkdir -p   "$SITE_DIR" "$CERT_DIR"   "$ACME_DIR/challenges/.well-known/acme-challenge" "$ACME_DIR/certs"   "$NGINX_SITE_DIR" "$NGINX_BASELINE_DIR" "$NGINX_DIFF_DIR" "$NGINX_CONFLICT_DIR"   "$WAF_DIR" "$WAF_CUSTOM_DIR"
+mkdir -p   "$SITE_DIR" "$CERT_DIR"   "$ACME_DIR/challenges/.well-known/acme-challenge" "$ACME_DIR/certs"   "$NGINX_SITE_DIR" "$NGINX_BASELINE_DIR" "$NGINX_DIFF_DIR" "$NGINX_CONFLICT_DIR"   "$WAF_DIR" "$WAF_CUSTOM_DIR" "$WAF_PLUGIN_DIR"
 
 die() {
   echo "$*" >&2
@@ -81,7 +83,15 @@ validate_root() {
 }
 
 validate_waf_profile() {
-  case "$1" in generic|wordpress) ;; *) die "Invalid WAF application profile." ;; esac
+  case "$1" in generic|wordpress|"") ;; *) die "Invalid legacy WAF application profile." ;; esac
+}
+
+validate_waf_pl() {
+  [[ "${1:-}" =~ ^[1-4]$ ]] || die "OWASP protection level must be PL1, PL2, PL3, or PL4."
+}
+
+validate_plugin_name() {
+  [[ "${1:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "Invalid CRS plugin name."
 }
 
 validate_route_match() {
@@ -95,9 +105,50 @@ validate_route_path() {
     die "Unsafe route pattern."
 }
 
-
 validate_rule_id() {
   [[ "${1:-}" =~ ^[0-9]{1,9}$ ]] || die "ModSecurity rule ID must contain digits only."
+}
+
+validate_timeout() {
+  if [[ ! "${1:-}" =~ ^[0-9]+$ ]] || (( 10#${1} < 1 || 10#${1} > 86400 )); then
+    die "Timeout must be between 1 and 86400 seconds."
+  fi
+}
+
+csv_contains() {
+  local csv="${1:-}" wanted="${2:-}" item
+  local -a items=()
+  IFS=',' read -r -a items <<< "$csv"
+  for item in "${items[@]}"; do
+    [[ "$item" == "$wanted" ]] && return 0
+  done
+  return 1
+}
+
+normalize_plugin_csv() {
+  local csv="${1:-}" item out=""
+  local -a items=()
+  IFS=',' read -r -a items <<< "$csv"
+  for item in "${items[@]}"; do
+    [[ -n "$item" ]] || continue
+    validate_plugin_name "$item"
+    [[ -d "$WAF_PLUGIN_DIR/$item" ]] || die "CRS plugin is not installed: $item"
+    if [[ -z "$out" ]]; then out="$item"; else out="$out,$item"; fi
+  done
+  printf '%s' "$out"
+}
+
+normalize_rule_csv() {
+  local csv="${1:-}" item out=""
+  local -a items=()
+  csv="${csv// /,}"
+  IFS=',' read -r -a items <<< "$csv"
+  for item in "${items[@]}"; do
+    [[ -n "$item" ]] || continue
+    validate_rule_id "$item"
+    if [[ -z "$out" ]]; then out="$item"; else out="$out,$item"; fi
+  done
+  printf '%s' "$out"
 }
 
 disabled_waf_rules() {
@@ -105,13 +156,6 @@ disabled_waf_rules() {
   file="$(waf_rule_file "$1")"
   [[ -f "$file" ]] || return 0
   grep -E '^[0-9]{1,9}$' "$file" | sort -n -u
-}
-
-
-validate_timeout() {
-  if [[ ! "${1:-}" =~ ^[0-9]+$ ]] || (( 10#${1} < 1 || 10#${1} > 86400 )); then
-    die "Timeout must be between 1 and 86400 seconds."
-  fi
 }
 
 server_setting_get() {
@@ -138,6 +182,21 @@ global_disabled_waf_rules() {
 custom_waf_rule_file() {
   validate_rule_id "$1"
   printf '%s/%s.conf' "$WAF_CUSTOM_DIR" "$1"
+}
+
+installed_plugin_rows() {
+  local dir meta name repo type status category
+  shopt -s nullglob
+  for dir in "$WAF_PLUGIN_DIR"/*; do
+    [[ -d "$dir" ]] || continue
+    meta="$dir/.liteedge-plugin"
+    name="$(basename "$dir")"
+    repo="$(kv_get "$meta" REPO)"
+    type="$(kv_get "$meta" TYPE)"
+    status="$(kv_get "$meta" STATUS)"
+    category="$(kv_get "$meta" CATEGORY)"
+    printf '%s\t%s\t%s\t%s\t%s\n' "$name" "$repo" "$type" "$status" "${category:-plugin}"
+  done | sort
 }
 
 reload_nginx() {

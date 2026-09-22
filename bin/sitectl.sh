@@ -47,7 +47,7 @@ validate_known_site() {
 
 legacy_default_to_route() {
   local host="$1" file="$2"
-  local mode upstream websocket waf force_https timeout dir id
+  local mode upstream websocket waf force_https timeout dir id waf_pl waf_plugins
   mode="$(kv_get "$file" MODE)"
   upstream="$(kv_get "$file" UPSTREAM)"
   [[ "$mode" == proxy || "$mode" == wordpress ]] || return 0
@@ -76,7 +76,14 @@ legacy_default_to_route() {
       printf 'TIMEOUT=%s\n' "$timeout"
       printf 'WAF=%s\n' "$waf"
       printf 'FORCE_HTTPS=%s\n' "$force_https"
-      printf 'PROFILE=%s\n' "$([[ "$mode" == wordpress ]] && echo wordpress || echo generic)"
+      waf_pl="$(waf_setting_get PARANOIA_LEVEL 1)"
+      waf_plugins=""
+      if [[ "$mode" == wordpress && -d "$WAF_PLUGIN_DIR/wordpress-rule-exclusions" ]]; then
+        waf_plugins=wordpress-rule-exclusions
+      fi
+      printf 'WAF_PL=%s\n' "$waf_pl"
+      printf 'WAF_PLUGINS=%s\n' "$waf_plugins"
+      printf 'WAF_DISABLED=\n'
     } > "$dir/$id.route"
   fi
 }
@@ -200,14 +207,27 @@ case "$cmd" in
     timeout="${6:-$(server_setting_get DEFAULT_ROUTE_TIMEOUT 60)}"
     waf="$(bool_value "${7:-1}")"
     force_https="$(bool_value "${8:-1}")"
-    profile="${9:-generic}"
+    waf_pl="${9:-$(waf_setting_get PARANOIA_LEVEL 1)}"
+    waf_plugins="${10:-}"
+    waf_disabled="${11:-}"
+
+    if [[ "$waf_pl" == generic || "$waf_pl" == wordpress ]]; then
+      legacy_profile="$waf_pl"
+      waf_pl="$(waf_setting_get PARANOIA_LEVEL 1)"
+      waf_plugins=""
+      if [[ "$legacy_profile" == wordpress && -d "$WAF_PLUGIN_DIR/wordpress-rule-exclusions" ]]; then
+        waf_plugins=wordpress-rule-exclusions
+      fi
+    fi
 
     validate_known_site "$host"
     validate_route_match "$match"
     validate_route_path "$path"
     validate_upstream "$target"
     validate_timeout "$timeout"
-    validate_waf_profile "$profile"
+    validate_waf_pl "$waf_pl"
+    waf_plugins="$(normalize_plugin_csv "$waf_plugins")"
+    waf_disabled="$(normalize_rule_csv "$waf_disabled")"
     if [[ -n "$old_id" && ! "$old_id" =~ ^[a-f0-9]{16}$ ]]; then
       die "Invalid route id."
     fi
@@ -225,7 +245,9 @@ case "$cmd" in
       printf 'TIMEOUT=%s\n' "$timeout"
       printf 'WAF=%s\n' "$waf"
       printf 'FORCE_HTTPS=%s\n' "$force_https"
-      printf 'PROFILE=%s\n' "$profile"
+      printf 'WAF_PL=%s\n' "$waf_pl"
+      printf 'WAF_PLUGINS=%s\n' "$waf_plugins"
+      printf 'WAF_DISABLED=%s\n' "$waf_disabled"
     } > "$dir/$id.route"
     if [[ -n "$old_id" && "$old_id" != "$id" ]]; then
       rm -f "$dir/$old_id.route"

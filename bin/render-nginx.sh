@@ -7,7 +7,9 @@ mkdir -p "$NGINX_DIR" "$NGINX_BASELINE_DIR" "$NGINX_DIFF_DIR" "$NGINX_CONFLICT_D
 stage="$(mktemp -d "$NGINX_DIR/sites.stage.XXXXXX")"
 baseline_stage="$(mktemp -d "$NGINX_DIR/baselines.stage.XXXXXX")"
 diff_stage="$(mktemp -d "$NGINX_DIR/diffs.stage.XXXXXX")"
-trap 'rm -rf "$stage" "$baseline_stage" "$diff_stage"' EXIT
+WAF_ROUTE_DIR="$NGINX_DIR/waf-routes"
+waf_route_stage="$(mktemp -d "$NGINX_DIR/waf-routes.stage.XXXXXX")"
+trap 'rm -rf "$stage" "$baseline_stage" "$diff_stage" "$waf_route_stage"' EXIT
 shopt -s nullglob
 
 HTTP_PORT="${LITEEDGE_HTTP_PORT:-80}"
@@ -31,19 +33,62 @@ emit_websocket_headers() {
 CONF
 }
 
-emit_location_waf() {
-  local host="$1" profile="$2" rule_id
-  echo "        modsecurity on;"
-  if [[ "$profile" == wordpress ]]; then
-    echo "        modsecurity_rules_file $NGINX_DIR/modsecurity-wordpress.conf;"
-  else
-    echo "        modsecurity_rules_file $NGINX_DIR/modsecurity-main.conf;"
-  fi
+emit_plugin_group() {
+  local plugin_csv="$1" suffix="$2" plugin file
+  local -a plugin_list=()
+  IFS=',' read -r -a plugin_list <<< "$plugin_csv"
+  for plugin in "${plugin_list[@]}"; do
+    [[ -n "$plugin" ]] || continue
+    validate_plugin_name "$plugin"
+    [[ -d "$WAF_PLUGIN_DIR/$plugin/plugins" ]] || die "Selected CRS plugin is not installed: $plugin"
+    shopt -s nullglob
+    for file in "$WAF_PLUGIN_DIR/$plugin/plugins/"*-"$suffix".conf; do
+      printf 'Include %s\n' "$file"
+    done
+  done
+}
 
-  while IFS= read -r rule_id; do
-    [[ -n "$rule_id" ]] || continue
-    echo "        modsecurity_rules 'SecRuleRemoveById $rule_id';"
-  done < <(disabled_waf_rules "$host")
+build_route_waf_config() {
+  local host="$1" route_id="$2" pl="$3" plugin_csv="$4" disabled="$5"
+  local slug out control_id rule_id item
+  local -a route_rules=()
+
+  validate_waf_pl "$pl"
+  plugin_csv="$(normalize_plugin_csv "$plugin_csv")"
+  disabled="$(normalize_rule_csv "$disabled")"
+  slug="$(slug_for_host "$host")"
+  out="$waf_route_stage/${slug}-${route_id}.conf"
+  control_id=$((80000000 + (16#${route_id:0:6})))
+
+  {
+    printf 'Include %s/modsecurity.conf\n' "$NGINX_DIR"
+    echo 'Include /opt/liteedge/etc/crs/crs-setup.conf'
+    printf 'SecAction "id:%s,phase:1,nolog,pass,setvar:tx.paranoia_level=%s,setvar:tx.executing_paranoia_level=%s"\n' "$control_id" "$pl" "$pl"
+    emit_plugin_group "$plugin_csv" config
+    emit_plugin_group "$plugin_csv" before
+    echo 'Include /opt/liteedge/etc/crs/rules/*.conf'
+    emit_plugin_group "$plugin_csv" after
+    printf 'Include %s/modsecurity-overrides.conf\n' "$NGINX_DIR"
+
+    while IFS= read -r rule_id; do
+      [[ -n "$rule_id" ]] && printf 'SecRuleRemoveById %s\n' "$rule_id"
+    done < <(disabled_waf_rules "$host")
+
+    IFS=',' read -r -a route_rules <<< "$disabled"
+    for item in "${route_rules[@]}"; do
+      [[ -n "$item" ]] && printf 'SecRuleRemoveById %s\n' "$item"
+    done
+  } > "$out"
+  chmod 0644 "$out"
+}
+
+emit_location_waf() {
+  local host="$1" route_id="$2" pl="$3" plugin_csv="$4" disabled="$5"
+  local slug
+  slug="$(slug_for_host "$host")"
+  build_route_waf_config "$host" "$route_id" "$pl" "$plugin_csv" "$disabled"
+  echo "        modsecurity on;"
+  echo "        modsecurity_rules_file $WAF_ROUTE_DIR/${slug}-${route_id}.conf;"
 }
 
 route_value() {
@@ -54,7 +99,7 @@ route_value() {
 
 emit_route_values() {
   local host="$1" match="$2" path="$3" target="$4" websocket="$5"
-  local timeout="$6" waf="$7" force_https="$8" profile="$9" scheme="${10}" cert_exists="${11}"
+  local timeout="$6" waf="$7" force_https="$8" waf_pl="$9" waf_plugins="${10}" waf_disabled="${11}" scheme="${12}" cert_exists="${13}"
   local location id
 
   case "$match" in
@@ -73,7 +118,7 @@ emit_route_values() {
   fi
 
   if [[ "$waf" == 1 ]]; then
-    emit_location_waf "$host" "$profile"
+    emit_location_waf "$host" "$id" "$waf_pl" "$waf_plugins" "$waf_disabled"
   fi
 
   printf '        set $liteedge_route_%s "%s";\n' "$id" "$target"
@@ -88,7 +133,7 @@ emit_route_values() {
 
 emit_route() {
   local host="$1" route="$2" scheme="$3" cert_exists="$4"
-  local match path target websocket timeout waf force_https profile
+  local match path target websocket timeout waf force_https waf_pl waf_plugins waf_disabled legacy_profile
   match="$(route_value "$route" MATCH prefix)"
   path="$(route_value "$route" PATH /)"
   target="$(route_value "$route" TARGET "")"
@@ -96,9 +141,16 @@ emit_route() {
   timeout="$(route_value "$route" TIMEOUT "$(server_setting_get DEFAULT_ROUTE_TIMEOUT 60)")"
   waf="$(route_value "$route" WAF 1)"
   force_https="$(route_value "$route" FORCE_HTTPS 1)"
-  profile="$(route_value "$route" PROFILE generic)"
+  waf_pl="$(route_value "$route" WAF_PL "$(waf_setting_get PARANOIA_LEVEL 1)")"
+  waf_plugins="$(route_value "$route" WAF_PLUGINS "")"
+  waf_disabled="$(route_value "$route" WAF_DISABLED "")"
 
-  emit_route_values "$host" "$match" "$path" "$target" "$websocket" "$timeout" "$waf" "$force_https" "$profile" "$scheme" "$cert_exists"
+  legacy_profile="$(route_value "$route" PROFILE "")"
+  if [[ -z "$waf_plugins" && "$legacy_profile" == wordpress && -d "$WAF_PLUGIN_DIR/wordpress-rule-exclusions" ]]; then
+    waf_plugins=wordpress-rule-exclusions
+  fi
+
+  emit_route_values "$host" "$match" "$path" "$target" "$websocket" "$timeout" "$waf" "$force_https" "$waf_pl" "$waf_plugins" "$waf_disabled" "$scheme" "$cert_exists"
 }
 
 has_root_route() {
@@ -112,7 +164,7 @@ has_root_route() {
 
 emit_legacy_default() {
   local host="$1" file="$2" scheme="$3" cert_exists="$4"
-  local mode upstream websocket waf force_https timeout profile
+  local mode upstream websocket waf force_https timeout waf_pl waf_plugins
   mode="$(kv_get "$file" MODE)"
   upstream="$(kv_get "$file" UPSTREAM)"
   [[ "$mode" == proxy || "$mode" == wordpress ]] || return 0
@@ -126,10 +178,13 @@ emit_legacy_default() {
   [[ "$waf" =~ ^[01]$ ]] || waf=1
   [[ "$force_https" =~ ^[01]$ ]] || force_https=1
   timeout="$(server_setting_get DEFAULT_ROUTE_TIMEOUT 60)"
-  profile=generic
-  [[ "$mode" == wordpress ]] && profile=wordpress
+  waf_pl="$(waf_setting_get PARANOIA_LEVEL 1)"
+  waf_plugins=""
+  if [[ "$mode" == wordpress && -d "$WAF_PLUGIN_DIR/wordpress-rule-exclusions" ]]; then
+    waf_plugins=wordpress-rule-exclusions
+  fi
 
-  emit_route_values "$host" prefix / "$upstream" "$websocket" "$timeout" "$waf" "$force_https" "$profile" "$scheme" "$cert_exists"
+  emit_route_values "$host" prefix / "$upstream" "$websocket" "$timeout" "$waf" "$force_https" "$waf_pl" "$waf_plugins" "" "$scheme" "$cert_exists"
 }
 
 emit_routes() {
@@ -243,20 +298,26 @@ CONF
 done
 
 backup="${NGINX_SITE_DIR}.backup"
-rm -rf "$backup"
+waf_backup="${WAF_ROUTE_DIR}.backup"
+rm -rf "$backup" "$waf_backup"
 if [[ -d "$NGINX_SITE_DIR" ]]; then
   mv "$NGINX_SITE_DIR" "$backup"
 fi
+if [[ -d "$WAF_ROUTE_DIR" ]]; then
+  mv "$WAF_ROUTE_DIR" "$waf_backup"
+fi
 mv "$stage" "$NGINX_SITE_DIR"
+mv "$waf_route_stage" "$WAF_ROUTE_DIR"
 
 if [[ "${SKIP_NGINX_TEST:-0}" != 1 ]] && ! "$NGINX_BIN" -t -c "$NGINX_CONF"; then
-  rm -rf "$NGINX_SITE_DIR"
+  rm -rf "$NGINX_SITE_DIR" "$WAF_ROUTE_DIR"
   [[ -d "$backup" ]] && mv "$backup" "$NGINX_SITE_DIR"
+  [[ -d "$waf_backup" ]] && mv "$waf_backup" "$WAF_ROUTE_DIR"
   echo "Generated NGINX configuration failed validation; previous configuration restored." >&2
   exit 1
 fi
 
-rm -rf "$backup"
+rm -rf "$backup" "$waf_backup"
 
 baseline_backup="${NGINX_BASELINE_DIR}.backup"
 diff_backup="${NGINX_DIFF_DIR}.backup"
