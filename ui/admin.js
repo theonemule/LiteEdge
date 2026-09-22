@@ -78,5 +78,11 @@
       event.preventDefault();
       await uploadRaw(wafForm, "/admin/owasp/import");
     }
+
+    const crsForm = event.target.closest(".crs-import-form");
+    if (crsForm) {
+      event.preventDefault();
+      await uploadRaw(crsForm, "/admin/owasp/crs/import");
+    }
   });
 })();

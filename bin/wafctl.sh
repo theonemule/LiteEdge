@@ -152,13 +152,20 @@ case "$cmd" in
     mkdir -p "$root/custom" "$root/plugins"
     cat > "$root/manifest" <<'EOF'
 FORMAT=liteedge-waf-rules
-VERSION=2
+VERSION=3
 EOF
     cp "$WAF_SETTINGS_FILE" "$root/settings.conf"
     [[ -f "$WAF_DISABLED_FILE" ]] && cp "$WAF_DISABLED_FILE" "$root/disabled-rules"
     [[ -f "$WAF_REGISTRY_FILE" ]] && cp "$WAF_REGISTRY_FILE" "$root/registry.tsv"
     cp -a "$WAF_CUSTOM_DIR/." "$root/custom/" 2>/dev/null || true
     cp -a "$WAF_PLUGIN_DIR/." "$root/plugins/" 2>/dev/null || true
+    if [[ "$(active_crs_dir)" == "$WAF_CRS_DIR" ]]; then
+      mkdir -p "$root/crs"
+      cp -a "$WAF_CRS_DIR/." "$root/crs/"
+      if [[ -f "$WAF_CRS_META_FILE" ]]; then
+        cp "$WAF_CRS_META_FILE" "$root/crs-release.conf"
+      fi
+    fi
     tar -C "$tmp" -czf "$output" liteedge-waf
     chmod 600 "$output"
     ;;
@@ -173,7 +180,7 @@ EOF
     root="$tmp/liteedge-waf"
     version="$(kv_get "$root/manifest" VERSION)"
     [[ "$(kv_get "$root/manifest" FORMAT)" == liteedge-waf-rules ]] || die "Unsupported OWASP rules bundle."
-    case "$version" in 1|2) ;; *) die "Unsupported OWASP rules bundle version." ;; esac
+    case "$version" in 1|2|3) ;; *) die "Unsupported OWASP rules bundle version." ;; esac
 
     pl="$(kv_get "$root/settings.conf" PARANOIA_LEVEL)"
     [[ -z "$pl" ]] && pl=1
@@ -209,6 +216,22 @@ EOF
         die "Imported plugin registry is invalid."
     fi
 
+    if [[ -d "$root/crs" ]]; then
+      [[ "$version" == 3 ]] || die "Managed CRS content requires OWASP bundle version 3."
+      [[ -f "$root/crs/crs-setup.conf" && -d "$root/crs/rules" ]] ||
+        die "Imported managed CRS is incomplete."
+      [[ -f "$root/crs-release.conf" ]] || die "Imported managed CRS metadata is missing."
+      crs_version="$(kv_get "$root/crs-release.conf" VERSION)"
+      [[ "$crs_version" =~ ^[0-9]+[.][0-9]+[.][0-9]+$ ]] ||
+        die "Imported managed CRS version is invalid."
+      [[ -f "$root/crs/rules/REQUEST-901-INITIALIZATION.conf" ]] ||
+        die "Imported managed CRS is missing REQUEST-901-INITIALIZATION.conf."
+      [[ -f "$root/crs/rules/REQUEST-949-BLOCKING-EVALUATION.conf" ]] ||
+        die "Imported managed CRS is missing REQUEST-949-BLOCKING-EVALUATION.conf."
+      crs_count="$(find "$root/crs/rules" -maxdepth 1 -type f -name '*.conf' | wc -l | tr -d ' ')"
+      (( crs_count >= 20 )) || die "Imported managed CRS contains too few active rule files."
+    fi
+
     snapshot_waf
     rm -rf "$WAF_DIR"
     mkdir -p "$WAF_CUSTOM_DIR" "$WAF_PLUGIN_DIR"
@@ -217,6 +240,21 @@ EOF
     [[ -f "$root/registry.tsv" ]] && cp "$root/registry.tsv" "$WAF_REGISTRY_FILE"
     cp -a "$root/custom/." "$WAF_CUSTOM_DIR/" 2>/dev/null || true
     cp -a "$root/plugins/." "$WAF_PLUGIN_DIR/" 2>/dev/null || true
+    if [[ -d "$root/crs" ]]; then
+      mkdir -p "$WAF_CRS_DIR"
+      cp -a "$root/crs/." "$WAF_CRS_DIR/"
+      cp "$root/crs-release.conf" "$WAF_CRS_META_FILE"
+      chmod 0600 "$WAF_CRS_META_FILE"
+    elif [[ -d "$WAF_BACKUP/crs" ]]; then
+      mkdir -p "$WAF_CRS_DIR"
+      cp -a "$WAF_BACKUP/crs/." "$WAF_CRS_DIR/"
+      if [[ -f "$WAF_BACKUP/crs-release.conf" ]]; then
+        cp "$WAF_BACKUP/crs-release.conf" "$WAF_CRS_META_FILE"
+      fi
+    fi
+    if [[ -f "$WAF_BACKUP/crs-update.conf" ]]; then
+      cp "$WAF_BACKUP/crs-update.conf" "$WAF_CRS_UPDATE_FILE"
+    fi
     /opt/liteedge/bin/wafregistry.sh ensure >/dev/null 2>&1 || true
     apply_waf
     rm -rf "$tmp"

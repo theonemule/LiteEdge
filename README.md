@@ -52,8 +52,12 @@ OWASP CRS policy is route-scoped. Each route can enable or disable the WAF, sele
 PL1 through PL4, select installed CRS plugins and application rule-exclusion plugins,
 and maintain route-only disabled rule IDs. The OWASP page manages application profiles
 and other plugins separately, allows editable plugin configuration with transactional
-rollback, exposes a searchable enable/disable list of actionable core CRS rules, and
-maintains custom rules, global exclusions, and the cached machine-readable CRS registry.
+rollback, exposes core CRS rules through a searchable management dialog, and maintains
+custom rules and global exclusions. LiteEdge periodically checks the official OWASP CRS
+release feed, surfaces newer stable releases in the UI, and can download or manually
+import a CRS source bundle. Updated CRS releases are stored in persistent LiteEdge data
+and are staged, validated against NGINX and ModSecurity, and rolled back automatically
+if activation fails. OWASP configuration exports include an active managed CRS release.
 
 Each host supports three certificate modes:
 

@@ -811,9 +811,21 @@ HTML
 }
 
 owasp_page() {
-  local pl file name id state text
+  local pl file name id state text crs_status crs_current crs_latest crs_update crs_source crs_badge
   pl="$(waf_setting_get PARANOIA_LEVEL 1)"
   /opt/liteedge/bin/wafregistry.sh ensure >/dev/null 2>&1 || true
+  /opt/liteedge/bin/crsctl.sh check-if-stale >/dev/null 2>&1 || true
+  crs_status="$(/opt/liteedge/bin/crsctl.sh status 2>/dev/null || true)"
+  crs_current="$(printf '%s\n' "$crs_status" | sed -n 's/^CURRENT_VERSION=//p' | head -n1)"
+  crs_latest="$(printf '%s\n' "$crs_status" | sed -n 's/^LATEST_VERSION=//p' | head -n1)"
+  crs_update="$(printf '%s\n' "$crs_status" | sed -n 's/^UPDATE_AVAILABLE=//p' | head -n1)"
+  crs_source="$(printf '%s\n' "$crs_status" | sed -n 's/^SOURCE=//p' | head -n1)"
+  [[ -n "$crs_current" ]] || crs_current="$(active_crs_version)"
+  case "$crs_update:$crs_latest" in
+    1:*) crs_badge='<span class="badge text-bg-warning">Update available</span>' ;;
+    0:?*) crs_badge='<span class="badge text-bg-success">Up to date</span>' ;;
+    *) crs_badge='<span class="badge text-bg-secondary">Not checked</span>' ;;
+  esac
   page_head "OWASP"
   cat <<HTML
 <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
@@ -821,9 +833,41 @@ owasp_page() {
   <div class="d-flex gap-2"><a class="btn btn-outline-secondary" href="/admin/owasp/export">Export OWASP</a><button class="btn btn-outline-secondary" type="button" data-dialog-open="wafImportDialog">Import OWASP</button></div>
 </div>
 <dialog class="liteedge-dialog" id="wafImportDialog"><div class="card border-0"><div class="card-header d-flex justify-content-between"><strong>Import OWASP configuration</strong><button class="btn-close" type="button" data-dialog-close></button></div><div class="card-body"><form class="waf-import-form" data-redirect="/admin/owasp"><input class="form-control mb-3" type="file" accept=".tar.gz,.tgz,application/gzip" required><button class="btn btn-primary" type="submit">Import OWASP configuration</button></form></div></div></dialog>
+<dialog class="liteedge-dialog" id="crsImportDialog"><div class="card border-0"><div class="card-header d-flex justify-content-between"><strong>Import OWASP CRS release</strong><button class="btn-close" type="button" data-dialog-close></button></div><div class="card-body"><form class="crs-import-form" data-redirect="/admin/owasp"><p class="small text-secondary">Upload an OWASP Core Rule Set source <code>.tar.gz</code>. LiteEdge detects its CRS version, validates the archive, tests every active route and plugin against it, and rolls back if validation fails.</p><input class="form-control mb-3" type="file" accept=".tar.gz,.tgz,application/gzip" required><button class="btn btn-primary" type="submit">Import and activate CRS</button></form></div></div></dialog>
 
 <div class="row g-4 mb-4">
-<div class="col-xl-5"><div class="card shadow-sm h-100"><div class="card-header d-flex justify-content-between"><strong>Core Rule Set</strong><span class="badge text-bg-success">Available</span></div><div class="card-body"><h2 class="h5">OWASP CRS 4.29.0</h2><p class="text-secondary mb-2">CRS is the shared security foundation. Routes independently choose WAF on/off, PL1–PL4, installed application profiles, plugins, and route-only exclusions.</p><div class="small text-secondary">Application profiles are CRS rule-exclusion plugins rather than hardcoded LiteEdge profiles.</div></div></div></div>
+<div class="col-xl-5"><div class="card shadow-sm h-100">
+<div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2"><strong>Core Rule Set</strong><div class="d-flex gap-2">$crs_badge<span class="badge text-bg-light border">$(html_escape "${crs_source:-bundled}")</span></div></div>
+<div class="card-body">
+  <h2 class="h5">OWASP CRS $(html_escape "$crs_current")</h2>
+  <p class="text-secondary mb-2">CRS is the shared security foundation. Routes independently choose WAF on/off, PL1–PL4, installed application profiles, plugins, and route-only exclusions.</p>
+HTML
+  if [[ "$crs_update" == 1 && -n "$crs_latest" ]]; then
+    cat <<HTML
+  <div class="alert alert-warning py-2 mb-3"><strong>OWASP CRS $(html_escape "$crs_latest") is available.</strong> The update is staged and validated before LiteEdge activates it.</div>
+HTML
+  elif [[ -n "$crs_latest" ]]; then
+    echo "<div class=\"small text-secondary mb-3\">Latest official release checked: OWASP CRS $(html_escape "$crs_latest").</div>"
+  else
+    echo '<div class="small text-secondary mb-3">No release check has completed yet.</div>'
+  fi
+  cat <<HTML
+  <div class="d-flex flex-wrap gap-2">
+    <form method="post" action="/admin/owasp/crs/check"><button class="btn btn-sm btn-outline-secondary" type="submit">Check for updates</button></form>
+HTML
+  if [[ "$crs_update" == 1 && -n "$crs_latest" ]]; then
+    echo "<form method=\"post\" action=\"/admin/owasp/crs/update\"><button class=\"btn btn-sm btn-primary\" type=\"submit\">Download &amp; install $(html_escape "$crs_latest")</button></form>"
+  fi
+  cat <<'HTML'
+    <button class="btn btn-sm btn-outline-primary" type="button" data-dialog-open="crsImportDialog">Import CRS bundle</button>
+HTML
+  if [[ "$crs_source" == managed ]]; then
+    echo '<form method="post" action="/admin/owasp/crs/reset"><button class="btn btn-sm btn-outline-secondary" type="submit">Use bundled CRS</button></form>'
+  fi
+  cat <<'HTML'
+  </div>
+  <div class="small text-secondary mt-3">Imported or downloaded CRS releases are stored in LiteEdge data and survive container replacement. Invalid updates are rolled back automatically.</div>
+</div></div></div>
 <div class="col-xl-7"><div class="card shadow-sm h-100"><div class="card-header"><strong>Default protection level for new routes</strong></div><div class="card-body"><form method="post" action="/admin/owasp/pl"><div class="row g-2">
 <div class="col-6 col-lg-3"><input class="btn-check" type="radio" name="pl" value="1" id="pl1" $([[ "$pl" == 1 ]] && echo checked)><label class="btn btn-outline-primary w-100" for="pl1"><b>PL1</b><br><small>Normal</small></label></div>
 <div class="col-6 col-lg-3"><input class="btn-check" type="radio" name="pl" value="2" id="pl2" $([[ "$pl" == 2 ]] && echo checked)><label class="btn btn-outline-primary w-100" for="pl2"><b>PL2</b><br><small>Enhanced</small></label></div>
@@ -991,6 +1035,37 @@ handle_raw_import() {
   trap - EXIT
   exit 0
 }
+handle_crs_raw_import() {
+  local length tmp output size
+  [[ "${REQUEST_METHOD:-GET}" == POST ]] || {
+    printf 'Status: 405 Method Not Allowed\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nPOST required.\n'
+    exit 0
+  }
+  length="${CONTENT_LENGTH:-0}"
+  [[ "$length" =~ ^[0-9]+$ ]] || length=0
+  if (( length < 1 || length > 33554432 )); then
+    printf 'Status: 413 Payload Too Large\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nCRS bundle must be between 1 byte and 32 MiB.\n'
+    exit 0
+  fi
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  head -c "$length" > "$tmp/crs.tar.gz"
+  size="$(wc -c < "$tmp/crs.tar.gz" | tr -d ' ')"
+  if [[ "$size" != "$length" ]]; then
+    printf 'Status: 400 Bad Request\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nUpload ended before the declared request length.\n'
+    exit 0
+  fi
+  if ! output="$(/opt/liteedge/bin/crsctl.sh import "$tmp/crs.tar.gz" 2>&1)"; then
+    printf 'Status: 400 Bad Request\r\nContent-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\n\r\n%s\n' "$output"
+    exit 0
+  fi
+  output="$(printf '%s\n' "$output" | tail -n1)"
+  printf 'Content-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\n\r\nOWASP CRS %s imported and activated.\n' "$output"
+  rm -rf "$tmp"
+  trap - EXIT
+  exit 0
+}
+
 handle_post() {
   local path="$1" host output tmpdir plugins
   [[ "${REQUEST_METHOD:-GET}" == POST ]] || error_page "This action requires POST."
@@ -1066,6 +1141,18 @@ handle_post() {
 
     /admin/owasp/pl)
       run_or_error /opt/liteedge/bin/wafctl.sh set-pl "${PARAM[pl]:-1}"
+      redirect "/admin/owasp"
+      ;;
+    /admin/owasp/crs/check)
+      run_or_error /opt/liteedge/bin/crsctl.sh check
+      redirect "/admin/owasp"
+      ;;
+    /admin/owasp/crs/update)
+      run_or_error /opt/liteedge/bin/crsctl.sh install-latest
+      redirect "/admin/owasp"
+      ;;
+    /admin/owasp/crs/reset)
+      run_or_error /opt/liteedge/bin/crsctl.sh reset-bundled
       redirect "/admin/owasp"
       ;;
     /admin/owasp/catalog/refresh)
@@ -1160,6 +1247,9 @@ fi
 if [[ "$path" == /admin/owasp/import ]]; then
   handle_owasp_raw_import
 fi
+if [[ "$path" == /admin/owasp/crs/import ]]; then
+  handle_crs_raw_import
+fi
 
 if [[ "${REQUEST_METHOD:-GET}" == POST ]]; then
   length="${CONTENT_LENGTH:-0}"
@@ -1175,7 +1265,7 @@ case "$path" in
   /admin/site) site_editor ;;
   /admin/owasp) owasp_page ;;
   /admin/server) server_page ;;
-  /admin/site/save|/admin/site/delete|/admin/route/add|/admin/route/save|/admin/route/delete|/admin/cert/selfsigned|/admin/cert/letsencrypt|/admin/cert/import|/admin/waf/disable|/admin/waf/enable|/admin/owasp/pl|/admin/owasp/catalog/refresh|/admin/owasp/plugin/install|/admin/owasp/plugin/remove|/admin/owasp/plugin/config-save|/admin/owasp/rule/disable|/admin/owasp/rule/enable|/admin/owasp/custom/save|/admin/owasp/custom/disable|/admin/owasp/custom/enable|/admin/owasp/custom/delete|/admin/server/save|/admin/config/save|/admin/config/reset)
+  /admin/site/save|/admin/site/delete|/admin/route/add|/admin/route/save|/admin/route/delete|/admin/cert/selfsigned|/admin/cert/letsencrypt|/admin/cert/import|/admin/waf/disable|/admin/waf/enable|/admin/owasp/pl|/admin/owasp/crs/check|/admin/owasp/crs/update|/admin/owasp/crs/reset|/admin/owasp/catalog/refresh|/admin/owasp/plugin/install|/admin/owasp/plugin/remove|/admin/owasp/plugin/config-save|/admin/owasp/rule/disable|/admin/owasp/rule/enable|/admin/owasp/custom/save|/admin/owasp/custom/disable|/admin/owasp/custom/enable|/admin/owasp/custom/delete|/admin/server/save|/admin/config/save|/admin/config/reset)
     handle_post "$path" ;;
   *)
     page_head "Not found"

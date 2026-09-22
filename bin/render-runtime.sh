@@ -102,7 +102,8 @@ chmod 0644 "$overrides_tmp"
 mv -f "$overrides_tmp" "$NGINX_DIR/modsecurity-overrides.conf"
 
 nginx_dir_esc="$(escape_sed "$NGINX_DIR")"
-sed -e "s|@NGINX_DIR@|$nginx_dir_esc|g" \
+crs_dir_esc="$(escape_sed "$(active_crs_dir)")"
+sed -e "s|@NGINX_DIR@|$nginx_dir_esc|g" -e "s|@CRS_DIR@|$crs_dir_esc|g" \
   /opt/liteedge/etc/nginx/modsecurity-main.conf.template | replace_file "$NGINX_DIR/modsecurity-main.conf"
-sed -e "s|@NGINX_DIR@|$nginx_dir_esc|g" \
+sed -e "s|@NGINX_DIR@|$nginx_dir_esc|g" -e "s|@CRS_DIR@|$crs_dir_esc|g" \
   /opt/liteedge/etc/nginx/modsecurity-wordpress.conf.template | replace_file "$NGINX_DIR/modsecurity-wordpress.conf"

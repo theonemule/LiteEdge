@@ -21,6 +21,10 @@ WAF_DISABLED_FILE="${WAF_DISABLED_FILE:-$WAF_DIR/disabled-rules}"
 WAF_SETTINGS_FILE="${WAF_SETTINGS_FILE:-$WAF_DIR/settings.conf}"
 WAF_REGISTRY_FILE="${WAF_REGISTRY_FILE:-$WAF_DIR/registry.tsv}"
 WAF_PLUGIN_DIR="${WAF_PLUGIN_DIR:-$WAF_DIR/plugins}"
+WAF_CRS_DIR="${WAF_CRS_DIR:-$WAF_DIR/crs}"
+WAF_CRS_META_FILE="${WAF_CRS_META_FILE:-$WAF_DIR/crs-release.conf}"
+WAF_CRS_UPDATE_FILE="${WAF_CRS_UPDATE_FILE:-$WAF_DIR/crs-update.conf}"
+BUNDLED_CRS_DIR="${BUNDLED_CRS_DIR:-/opt/liteedge/etc/crs}"
 SERVER_SETTINGS_FILE="${SERVER_SETTINGS_FILE:-$DATA_DIR/server-settings.conf}"
 
 mkdir -p   "$SITE_DIR" "$CERT_DIR"   "$ACME_DIR/challenges/.well-known/acme-challenge" "$ACME_DIR/certs"   "$NGINX_SITE_DIR" "$NGINX_BASELINE_DIR" "$NGINX_DIFF_DIR" "$NGINX_CONFLICT_DIR"   "$WAF_DIR" "$WAF_CUSTOM_DIR" "$WAF_PLUGIN_DIR"
@@ -184,11 +188,34 @@ custom_waf_rule_file() {
   printf '%s/%s.conf' "$WAF_CUSTOM_DIR" "$1"
 }
 
+bundled_crs_version() {
+  sed -n 's/^CRS=//p' /opt/liteedge/VERSION 2>/dev/null | head -n1
+}
+
+active_crs_dir() {
+  if [[ -f "$WAF_CRS_DIR/crs-setup.conf" && -d "$WAF_CRS_DIR/rules" ]]; then
+    printf '%s' "$WAF_CRS_DIR"
+  else
+    printf '%s' "$BUNDLED_CRS_DIR"
+  fi
+}
+
+active_crs_version() {
+  local value
+  value="$(kv_get "$WAF_CRS_META_FILE" VERSION)"
+  if [[ -n "$value" && "$(active_crs_dir)" == "$WAF_CRS_DIR" ]]; then
+    printf '%s' "$value"
+  else
+    bundled_crs_version
+  fi
+}
+
 crs_rule_rows() {
-  local awk_file
+  local awk_file crs_dir
   awk_file=/opt/liteedge/share/crs-rule-parser.awk
   [[ -f "$awk_file" ]] || return 0
-  awk -f "$awk_file" /opt/liteedge/etc/crs/rules/*.conf 2>/dev/null | sort -t $'\t' -k1,1n -u
+  crs_dir="$(active_crs_dir)"
+  awk -f "$awk_file" "$crs_dir"/rules/*.conf 2>/dev/null | sort -t $'\t' -k1,1n -u
 }
 
 installed_plugin_rows() {

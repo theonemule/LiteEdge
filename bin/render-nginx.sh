@@ -62,11 +62,11 @@ build_route_waf_config() {
 
   {
     printf 'Include %s/modsecurity.conf\n' "$NGINX_DIR"
-    echo 'Include /opt/liteedge/etc/crs/crs-setup.conf'
+    printf 'Include %s/crs-setup.conf\n' "$(active_crs_dir)"
     printf 'SecAction "id:%s,phase:1,nolog,pass,setvar:tx.paranoia_level=%s,setvar:tx.executing_paranoia_level=%s"\n' "$control_id" "$pl" "$pl"
     emit_plugin_group "$plugin_csv" config
     emit_plugin_group "$plugin_csv" before
-    echo 'Include /opt/liteedge/etc/crs/rules/*.conf'
+    printf 'Include %s/rules/*.conf\n' "$(active_crs_dir)"
     emit_plugin_group "$plugin_csv" after
     printf 'Include %s/modsecurity-overrides.conf\n' "$NGINX_DIR"
 
