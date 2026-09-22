@@ -167,6 +167,36 @@ plugin_remove() {
   rm -rf "$backup"
 }
 
+
+plugin_config_path() {
+  local name="$1" file="$2" base
+  validate_plugin_name "$name"
+  [[ "$file" =~ ^[A-Za-z0-9._-]+-config\.conf$ ]] ||
+    die "Invalid plugin configuration filename."
+  base="$WAF_PLUGIN_DIR/$name/plugins"
+  [[ -d "$base" ]] || die "Plugin is not installed."
+  [[ -f "$base/$file" ]] || die "Plugin configuration file does not exist."
+  printf '%s' "$base/$file"
+}
+
+plugin_config_save() {
+  local name="$1" file="$2" source_file="$3" target backup
+  [[ -f "$source_file" ]] || die "Plugin configuration content is required."
+  target="$(plugin_config_path "$name" "$file")"
+  backup="$(mktemp)"
+  cp "$target" "$backup"
+  install -m 0644 "$source_file" "$target"
+
+  if ! /opt/liteedge/bin/render-nginx.sh || ! reload_nginx; then
+    cp "$backup" "$target"
+    /opt/liteedge/bin/render-nginx.sh >/dev/null 2>&1 || true
+    reload_nginx >/dev/null 2>&1 || true
+    rm -f "$backup"
+    die "Plugin configuration was rejected by NGINX/ModSecurity. The previous configuration was restored."
+  fi
+  rm -f "$backup"
+}
+
 cmd="${1:-}"
 shift || true
 case "$cmd" in
@@ -174,8 +204,9 @@ case "$cmd" in
   refresh) registry_refresh ;;
   install) plugin_install "${1:-}" ;;
   remove) plugin_remove "${1:-}" ;;
+  config-save) plugin_config_save "${1:-}" "${2:-}" "${3:-}" ;;
   *)
-    echo "Usage: wafregistry.sh ensure | refresh | install NAME | remove NAME" >&2
+    echo "Usage: wafregistry.sh ensure | refresh | install NAME | remove NAME | config-save NAME FILE SOURCE" >&2
     exit 2
     ;;
 esac

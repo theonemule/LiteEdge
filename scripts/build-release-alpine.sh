@@ -104,6 +104,7 @@ install -d -m 0755 "$PREFIX/share/openrc"
 install -m 0755 "$ROOT/packaging/openrc/liteedge" "$PREFIX/share/openrc/liteedge"
 install -m 0755 "$ROOT/scripts/install-alpine.sh" "$PREFIX/share/install-alpine.sh"
 install -m 0644 "$ROOT/registry/crs-plugin-registry.tsv" "$PREFIX/share/crs-plugin-registry.tsv"
+install -m 0644 "$ROOT/registry/crs-rule-parser.awk" "$PREFIX/share/crs-rule-parser.awk"
 install -m 0644 "$ROOT/license.txt" "$PREFIX/licenses/LiteEdge.txt"
 for item in   "$SRC/ModSecurity/LICENSE:ModSecurity.txt"   "$SRC/ModSecurity-nginx/LICENSE:ModSecurity-nginx.txt"   "$SRC/coreruleset/LICENSE:OWASP-CRS.txt"   "$SRC/dehydrated/LICENSE:dehydrated.txt"; do
   source_file="${item%%:*}"

@@ -50,9 +50,10 @@ URLs, WebSocket upgrades, timeouts, and HTTP-to-HTTPS redirection.
 
 OWASP CRS policy is route-scoped. Each route can enable or disable the WAF, select
 PL1 through PL4, select installed CRS plugins and application rule-exclusion plugins,
-and maintain route-only disabled rule IDs. The OWASP page manages the shared CRS
-inventory, custom rules, global exclusions, and a cached catalog refreshed from the
-machine-readable OWASP CRS plugin registry.
+and maintain route-only disabled rule IDs. The OWASP page manages application profiles
+and other plugins separately, allows editable plugin configuration with transactional
+rollback, exposes a searchable enable/disable list of actionable core CRS rules, and
+maintains custom rules, global exclusions, and the cached machine-readable CRS registry.
 
 Each host supports three certificate modes:
 

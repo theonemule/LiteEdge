@@ -184,6 +184,13 @@ custom_waf_rule_file() {
   printf '%s/%s.conf' "$WAF_CUSTOM_DIR" "$1"
 }
 
+crs_rule_rows() {
+  local awk_file
+  awk_file=/opt/liteedge/share/crs-rule-parser.awk
+  [[ -f "$awk_file" ]] || return 0
+  awk -f "$awk_file" /opt/liteedge/etc/crs/rules/*.conf 2>/dev/null | sort -t $'\t' -k1,1n -u
+}
+
 installed_plugin_rows() {
   local dir meta name repo type status category
   shopt -s nullglob

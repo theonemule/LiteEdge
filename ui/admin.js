@@ -51,6 +51,17 @@
     }
   }
 
+  const ruleSearch = document.getElementById("crsRuleSearch");
+  if (ruleSearch) {
+    ruleSearch.addEventListener("input", () => {
+      const term = ruleSearch.value.trim().toLowerCase();
+      document.querySelectorAll("[data-rule-row]").forEach((row) => {
+        const haystack = (row.dataset.ruleSearch || row.textContent || "").toLowerCase();
+        row.hidden = term !== "" && !haystack.includes(term);
+      });
+    });
+  }
+
   document.addEventListener("submit", async (event) => {
     const siteForm = event.target.closest(".bundle-import-form");
     if (siteForm) {

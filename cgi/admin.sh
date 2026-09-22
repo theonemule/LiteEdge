@@ -8,8 +8,24 @@ source /opt/liteedge/bin/common.sh
 declare -A PARAM
 
 url_decode() {
-  local data="${1//+/ }"
-  printf '%b' "${data//%/\\x}"
+  local data="${1//+/ }" out="" prefix rest hex decoded
+  while [[ "$data" == *%* ]]; do
+    prefix="${data%%\%*}"
+    rest="${data#*%}"
+    out+="$prefix"
+    if (( ${#rest} >= 2 )); then
+      hex="${rest:0:2}"
+      if [[ "$hex" =~ ^[0-9A-Fa-f]{2}$ && "$hex" != 00 ]]; then
+        printf -v decoded '%b' "\\x$hex"
+        out+="$decoded"
+        data="${rest:2}"
+        continue
+      fi
+    fi
+    out+='%'
+    data="$rest"
+  done
+  printf '%s%s' "$out" "$data"
 }
 
 parse_params() {
@@ -622,50 +638,62 @@ HTML
 HTML
 }
 
-owasp_page() {
-  local pl disabled rule_id file name id state text
-  local repo type status category installed action_label catalog_count installed_count
-  pl="$(waf_setting_get PARANOIA_LEVEL 1)"
-  /opt/liteedge/bin/wafregistry.sh ensure >/dev/null 2>&1 || true
-  catalog_count=0
-  installed_count=0
-  if [[ -s "$WAF_REGISTRY_FILE" ]]; then
-    catalog_count=$(( $(wc -l < "$WAF_REGISTRY_FILE") - 1 ))
-  fi
-  while IFS=$'\t' read -r name repo type status category; do
-    [[ -n "$name" ]] && installed_count=$((installed_count + 1))
-  done < <(installed_plugin_rows)
-  page_head "OWASP"
-  cat <<HTML
-<div class="d-flex justify-content-between align-items-center mb-4">
-  <div><h1 class="h3 mb-1">OWASP</h1><p class="text-secondary mb-0">CRS and its plugin inventory are managed here. WAF level, application exclusions, plugins, and route-only exclusions are selected independently on each route.</p></div>
-  <div class="d-flex gap-2"><a class="btn btn-outline-secondary" href="/admin/owasp/export">Export rules</a><button class="btn btn-outline-secondary" type="button" data-dialog-open="wafImportDialog">Import rules</button></div>
-</div>
-<dialog class="liteedge-dialog" id="wafImportDialog"><div class="card border-0"><div class="card-header d-flex justify-content-between"><strong>Import OWASP configuration</strong><button class="btn-close" type="button" data-dialog-close></button></div><div class="card-body"><form class="waf-import-form" data-redirect="/admin/owasp"><input class="form-control mb-3" type="file" accept=".tar.gz,.tgz,application/gzip" required><button class="btn btn-primary" type="submit">Import rules</button></form></div></div></dialog>
-
-<div class="row g-4 mb-4">
-<div class="col-xl-5"><div class="card shadow-sm h-100"><div class="card-header d-flex justify-content-between"><strong>Core Rule Set</strong><span class="badge text-bg-success">Enabled</span></div><div class="card-body"><h2 class="h5">OWASP CRS 4.x</h2><p class="text-secondary">CRS is LiteEdge's default general-purpose ruleset. A second full ruleset is not stacked on top automatically.</p><div class="small text-secondary">Bundled: CRS 4.29.0</div></div></div></div>
-<div class="col-xl-7"><div class="card shadow-sm h-100"><div class="card-header"><strong>Default protection level for new routes</strong></div><div class="card-body"><form method="post" action="/admin/owasp/pl"><div class="row g-2">
-<div class="col-6 col-lg-3"><input class="btn-check" type="radio" name="pl" value="1" id="pl1" $([[ "$pl" == 1 ]] && echo checked)><label class="btn btn-outline-primary w-100" for="pl1"><b>PL1</b><br><small>Normal</small></label></div>
-<div class="col-6 col-lg-3"><input class="btn-check" type="radio" name="pl" value="2" id="pl2" $([[ "$pl" == 2 ]] && echo checked)><label class="btn btn-outline-primary w-100" for="pl2"><b>PL2</b><br><small>Enhanced</small></label></div>
-<div class="col-6 col-lg-3"><input class="btn-check" type="radio" name="pl" value="3" id="pl3" $([[ "$pl" == 3 ]] && echo checked)><label class="btn btn-outline-primary w-100" for="pl3"><b>PL3</b><br><small>High</small></label></div>
-<div class="col-6 col-lg-3"><input class="btn-check" type="radio" name="pl" value="4" id="pl4" $([[ "$pl" == 4 ]] && echo checked)><label class="btn btn-outline-primary w-100" for="pl4"><b>PL4</b><br><small>Extreme</small></label></div>
-</div><button class="btn btn-primary mt-3" type="submit">Save default</button></form><div class="form-text mt-2">Existing routes keep their explicit protection level. This value is used for new and legacy routes.</div></div></div></div>
-</div>
-
-<div class="card shadow-sm mb-4">
-<div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
-<div><strong>CRS plugin registry</strong><span class="text-secondary small ms-2">$(html_escape "$catalog_count") catalog entries · $(html_escape "$installed_count") installed</span></div>
-<form method="post" action="/admin/owasp/catalog/refresh"><button class="btn btn-sm btn-outline-primary" type="submit">Refresh official registry</button></form>
-</div>
-<div class="card-body pb-0"><p class="text-secondary">Install a rule pack once, then select it only on the routes that need it. Application profiles are CRS rule-exclusion plugins and are discovered from the registry rather than hardcoded in LiteEdge.</p></div>
-<div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th>Plugin</th><th>Kind</th><th>Source</th><th>Status</th><th>Installed</th><th class="text-end">Action</th></tr></thead><tbody>
+plugin_config_panels() {
+  local wanted_category="$1"
+  local name _repo _type _status category config config_name found=0
+  while IFS=$'\t' read -r name _repo _type _status category; do
+    [[ -n "$name" && "$category" == "$wanted_category" ]] || continue
+    [[ -d "$WAF_PLUGIN_DIR/$name/plugins" ]] || continue
+    shopt -s nullglob
+    local configs=("$WAF_PLUGIN_DIR/$name/plugins/"*-config.conf)
+    [[ ${#configs[@]} -gt 0 ]] || continue
+    found=1
+    for config in "${configs[@]}"; do
+      config_name="$(basename "$config")"
+      cat <<HTML
+<details class="border rounded p-3 mb-3">
+  <summary><code>$(html_escape "$name")</code> · <code>$(html_escape "$config_name")</code></summary>
+  <form method="post" action="/admin/owasp/plugin/config-save" class="mt-3">
+    <input type="hidden" name="plugin" value="$(html_escape "$name")">
+    <input type="hidden" name="file" value="$(html_escape "$config_name")">
+    <textarea class="form-control font-monospace" name="config" rows="12" spellcheck="false" required>$(html_escape "$(cat "$config")")</textarea>
+    <div class="d-flex justify-content-between align-items-center mt-2">
+      <span class="form-text">Saved changes are validated through NGINX and ModSecurity. Invalid changes are rolled back.</span>
+      <button class="btn btn-sm btn-primary" type="submit">Save configuration</button>
+    </div>
+  </form>
+</details>
 HTML
+    done
+  done < <(installed_plugin_rows)
+
+  if [[ "$found" == 0 ]]; then
+    echo '<p class="small text-secondary mb-0">No installed items in this section expose an editable <code>*-config.conf</code> file.</p>'
+  fi
+}
+
+plugin_catalog_section() {
+  local wanted_category="$1" title="$2" description="$3"
+  local name repo type status category installed action_label count=0
+  if [[ -s "$WAF_REGISTRY_FILE" ]]; then
+    count="$(awk -F '\t' -v c="$wanted_category" 'NR>1 && $5==c {n++} END{print n+0}' "$WAF_REGISTRY_FILE")"
+  fi
+
+  cat <<HTML
+<div class="card shadow-sm mb-4">
+  <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+    <div><strong>$(html_escape "$title")</strong><span class="text-secondary small ms-2">$(html_escape "$count") available</span></div>
+    <form method="post" action="/admin/owasp/catalog/refresh"><button class="btn btn-sm btn-outline-primary" type="submit">Refresh official registry</button></form>
+  </div>
+  <div class="card-body pb-0"><p class="text-secondary">$(html_escape "$description")</p></div>
+  <div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th>Name</th><th>Source</th><th>Status</th><th>Installed</th><th class="text-end">Action</th></tr></thead><tbody>
+HTML
+
   if [[ ! -s "$WAF_REGISTRY_FILE" ]]; then
-    echo '<tr><td colspan="6" class="text-secondary">No registry catalog is available. Use Refresh official registry.</td></tr>'
+    echo '<tr><td colspan="5" class="text-secondary">No registry catalog is available. Refresh the official registry.</td></tr>'
   else
     while IFS=$'\t' read -r name repo type status category; do
-      [[ -n "$name" && "$name" != NAME ]] || continue
+      [[ -n "$name" && "$name" != NAME && "$category" == "$wanted_category" ]] || continue
       [[ "$name" == template ]] && continue
       validate_plugin_name "$name" 2>/dev/null || continue
       [[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || continue
@@ -675,12 +703,12 @@ HTML
       [[ "$installed" == 1 ]] && action_label=Update
       cat <<HTML
 <tr>
-<td><code>$(html_escape "$name")</code></td>
-<td>$([[ "$category" == application ]] && echo '<span class="badge text-bg-primary">Application exclusion</span>' || echo '<span class="badge text-bg-light border">Plugin</span>')</td>
-<td><a href="https://github.com/$(html_escape "$repo")" target="_blank" rel="noopener">$(html_escape "$repo")</a><div class="small text-secondary">$(html_escape "$type")</div></td>
-<td>$(html_escape "$status")</td>
-<td>$([[ "$installed" == 1 ]] && echo '<span class="badge text-bg-success">Installed</span>' || echo '<span class="badge text-bg-secondary">Not installed</span>')</td>
-<td class="text-end"><div class="d-inline-flex gap-1"><form method="post" action="/admin/owasp/plugin/install"><input type="hidden" name="plugin" value="$(html_escape "$name")"><button class="btn btn-sm btn-outline-primary" type="submit">$(html_escape "$action_label")</button></form>
+  <td><code>$(html_escape "$name")</code><div class="small text-secondary">$(html_escape "$type")</div></td>
+  <td><a href="https://github.com/$(html_escape "$repo")" target="_blank" rel="noopener">$(html_escape "$repo")</a></td>
+  <td>$(html_escape "$status")</td>
+  <td>$([[ "$installed" == 1 ]] && echo '<span class="badge text-bg-success">Installed</span>' || echo '<span class="badge text-bg-secondary">Not installed</span>')</td>
+  <td class="text-end"><div class="d-inline-flex gap-1">
+    <form method="post" action="/admin/owasp/plugin/install"><input type="hidden" name="plugin" value="$(html_escape "$name")"><button class="btn btn-sm btn-outline-primary" type="submit">$(html_escape "$action_label")</button></form>
 HTML
       if [[ "$installed" == 1 ]]; then
         echo "<form method=\"post\" action=\"/admin/owasp/plugin/remove\"><input type=\"hidden\" name=\"plugin\" value=\"$(html_escape "$name")\"><button class=\"btn btn-sm btn-outline-danger\" type=\"submit\">Remove</button></form>"
@@ -688,28 +716,108 @@ HTML
       echo '</div></td></tr>'
     done < "$WAF_REGISTRY_FILE"
   fi
-  cat <<'HTML'
-</tbody></table></div>
-<div class="card-footer small text-secondary">The catalog is cached in LiteEdge data. Refresh pulls the maintained OWASP CRS plugin registry. Installed plugins become selectable on individual routes.</div>
+
+  cat <<HTML
+  </tbody></table></div>
+  <div class="card-footer small text-secondary">Installed items become available immediately in the route editor.</div>
 </div>
 
-<div class="card shadow-sm mb-4"><div class="card-header"><strong>Globally disabled CRS rules</strong></div><div class="card-body">
+<div class="card shadow-sm mb-4">
+  <div class="card-header"><strong>$(html_escape "$title") configuration</strong></div>
+  <div class="card-body">
 HTML
-  disabled="$(global_disabled_waf_rules)"
-  if [[ -z "$disabled" ]]; then
-    echo '<p class="text-secondary">No core CRS rule IDs are globally disabled.</p>'
-  else
-    echo '<div class="d-flex flex-wrap gap-2 mb-3">'
-    while IFS= read -r rule_id; do
-      [[ -n "$rule_id" ]] || continue
-      echo "<form method=\"post\" action=\"/admin/owasp/rule/enable\" class=\"border rounded p-2\"><input type=\"hidden\" name=\"rule_id\" value=\"$(html_escape "$rule_id")\"><code>$(html_escape "$rule_id")</code> <button class=\"btn btn-sm btn-outline-success\" type=\"submit\">Enable</button></form>"
-    done <<< "$disabled"
-    echo '</div>'
-  fi
-  cat <<'HTML'
-<form method="post" action="/admin/owasp/rule/disable" class="row g-2 align-items-end"><div class="col-sm-4"><label class="form-label">CRS rule ID</label><input class="form-control font-monospace" name="rule_id" pattern="[0-9]{1,9}" required></div><div class="col-auto"><button class="btn btn-outline-danger" type="submit">Disable globally</button></div></form>
-</div></div>
+  plugin_config_panels "$wanted_category"
+  echo '</div></div>'
+}
 
+crs_rules_panel() {
+  local disabled rule_id source pl message state rule_count
+  declare -A disabled_map=()
+  disabled="$(global_disabled_waf_rules)"
+  while IFS= read -r rule_id; do
+    [[ -n "$rule_id" ]] && disabled_map["$rule_id"]=1
+  done <<< "$disabled"
+
+  rule_count="$(crs_rule_rows | wc -l | tr -d ' ')"
+  cat <<HTML
+<div class="card shadow-sm mb-4">
+  <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+    <div><strong>CRS Rules</strong><span class="text-secondary small ms-2">$(html_escape "$rule_count") actionable rules</span></div>
+    <input class="form-control form-control-sm" id="crsRuleSearch" style="max-width:22rem" type="search" placeholder="Search ID, message, PL, or rule file">
+  </div>
+  <div class="card-body pb-2"><p class="text-secondary mb-0">Enable or disable core CRS rules globally. Route-only exclusions remain in the route editor.</p></div>
+  <div class="table-responsive" style="max-height:42rem;overflow:auto">
+    <table class="table table-sm align-middle mb-0">
+      <thead class="sticky-top bg-body"><tr><th>ID</th><th>Rule</th><th>PL</th><th>Source</th><th>Status</th><th class="text-end">Action</th></tr></thead>
+      <tbody id="crsRuleTable">
+HTML
+
+  while IFS=$'\t' read -r rule_id source pl message; do
+    [[ -n "$rule_id" ]] || continue
+    if [[ -n "${disabled_map[$rule_id]:-}" ]]; then
+      state=disabled
+    else
+      state=enabled
+    fi
+    cat <<HTML
+<tr data-rule-row data-rule-search="$(html_escape "$rule_id $message PL$pl $source $state")">
+  <td><code>$(html_escape "$rule_id")</code></td>
+  <td>$(html_escape "$message")</td>
+  <td>$([[ "$pl" == "-" ]] && echo '<span class="text-secondary">—</span>' || echo "<span class=\"badge text-bg-light border\">PL$(html_escape "$pl")</span>")</td>
+  <td><code class="small">$(html_escape "$source")</code></td>
+  <td>$([[ "$state" == enabled ]] && echo '<span class="badge text-bg-success">Enabled</span>' || echo '<span class="badge text-bg-secondary">Disabled globally</span>')</td>
+  <td class="text-end">
+HTML
+    if [[ "$state" == enabled ]]; then
+      echo "<form method=\"post\" action=\"/admin/owasp/rule/disable\"><input type=\"hidden\" name=\"rule_id\" value=\"$(html_escape "$rule_id")\"><button class=\"btn btn-sm btn-outline-danger\" type=\"submit\">Disable</button></form>"
+    else
+      echo "<form method=\"post\" action=\"/admin/owasp/rule/enable\"><input type=\"hidden\" name=\"rule_id\" value=\"$(html_escape "$rule_id")\"><button class=\"btn btn-sm btn-outline-success\" type=\"submit\">Enable</button></form>"
+    fi
+    echo '</td></tr>'
+  done < <(crs_rule_rows)
+
+  cat <<'HTML'
+      </tbody>
+    </table>
+  </div>
+  <div class="card-footer">
+    <form method="post" action="/admin/owasp/rule/disable" class="row g-2 align-items-end">
+      <div class="col-sm-4"><label class="form-label">Disable by rule ID</label><input class="form-control font-monospace" name="rule_id" pattern="[0-9]{1,9}" required></div>
+      <div class="col-auto"><button class="btn btn-outline-danger" type="submit">Disable globally</button></div>
+    </form>
+  </div>
+</div>
+HTML
+}
+
+owasp_page() {
+  local pl file name id state text
+  pl="$(waf_setting_get PARANOIA_LEVEL 1)"
+  /opt/liteedge/bin/wafregistry.sh ensure >/dev/null 2>&1 || true
+  page_head "OWASP"
+  cat <<HTML
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+  <div><h1 class="h3 mb-1">OWASP</h1><p class="text-secondary mb-0">Administer CRS, application profiles, plugins, core rules, exclusions, and custom rules. Each route owns its own WAF policy.</p></div>
+  <div class="d-flex gap-2"><a class="btn btn-outline-secondary" href="/admin/owasp/export">Export OWASP</a><button class="btn btn-outline-secondary" type="button" data-dialog-open="wafImportDialog">Import OWASP</button></div>
+</div>
+<dialog class="liteedge-dialog" id="wafImportDialog"><div class="card border-0"><div class="card-header d-flex justify-content-between"><strong>Import OWASP configuration</strong><button class="btn-close" type="button" data-dialog-close></button></div><div class="card-body"><form class="waf-import-form" data-redirect="/admin/owasp"><input class="form-control mb-3" type="file" accept=".tar.gz,.tgz,application/gzip" required><button class="btn btn-primary" type="submit">Import OWASP configuration</button></form></div></div></dialog>
+
+<div class="row g-4 mb-4">
+<div class="col-xl-5"><div class="card shadow-sm h-100"><div class="card-header d-flex justify-content-between"><strong>Core Rule Set</strong><span class="badge text-bg-success">Available</span></div><div class="card-body"><h2 class="h5">OWASP CRS 4.29.0</h2><p class="text-secondary mb-2">CRS is the shared security foundation. Routes independently choose WAF on/off, PL1–PL4, installed application profiles, plugins, and route-only exclusions.</p><div class="small text-secondary">Application profiles are CRS rule-exclusion plugins rather than hardcoded LiteEdge profiles.</div></div></div></div>
+<div class="col-xl-7"><div class="card shadow-sm h-100"><div class="card-header"><strong>Default protection level for new routes</strong></div><div class="card-body"><form method="post" action="/admin/owasp/pl"><div class="row g-2">
+<div class="col-6 col-lg-3"><input class="btn-check" type="radio" name="pl" value="1" id="pl1" $([[ "$pl" == 1 ]] && echo checked)><label class="btn btn-outline-primary w-100" for="pl1"><b>PL1</b><br><small>Normal</small></label></div>
+<div class="col-6 col-lg-3"><input class="btn-check" type="radio" name="pl" value="2" id="pl2" $([[ "$pl" == 2 ]] && echo checked)><label class="btn btn-outline-primary w-100" for="pl2"><b>PL2</b><br><small>Enhanced</small></label></div>
+<div class="col-6 col-lg-3"><input class="btn-check" type="radio" name="pl" value="3" id="pl3" $([[ "$pl" == 3 ]] && echo checked)><label class="btn btn-outline-primary w-100" for="pl3"><b>PL3</b><br><small>High</small></label></div>
+<div class="col-6 col-lg-3"><input class="btn-check" type="radio" name="pl" value="4" id="pl4" $([[ "$pl" == 4 ]] && echo checked)><label class="btn btn-outline-primary w-100" for="pl4"><b>PL1</b><br><small>Extreme</small></label></div>
+</div><button class="btn btn-primary mt-3" type="submit">Save default</button></form><div class="form-text mt-2">Existing routes keep their explicit protection level.</div></div></div></div>
+</div>
+HTML
+
+  plugin_catalog_section application "Application Profiles" "Install and maintain application-specific CRS rule-exclusion packs such as WordPress, Nextcloud, Drupal, phpMyAdmin, and others discovered from the official registry."
+  plugin_catalog_section plugin "Other CRS Plugins" "Install optional CRS extensions such as hardening, decoding, bot, DoS, and other registry plugins. Installed plugins become selectable per route."
+  crs_rules_panel
+
+  cat <<'HTML'
 <div class="card shadow-sm"><div class="card-header"><strong>Custom Rules</strong></div><div class="card-body">
 HTML
   shopt -s nullglob
@@ -944,6 +1052,15 @@ handle_post() {
       run_or_error /opt/liteedge/bin/wafregistry.sh remove "${PARAM[plugin]:-}"
       redirect "/admin/owasp"
       ;;
+    /admin/owasp/plugin/config-save)
+      tmpdir="$(mktemp -d)"
+      trap 'rm -rf "$tmpdir"' EXIT
+      printf '%s' "${PARAM[config]:-}" > "$tmpdir/plugin-config.conf"
+      run_or_error /opt/liteedge/bin/wafregistry.sh config-save "${PARAM[plugin]:-}" "${PARAM[file]:-}" "$tmpdir/plugin-config.conf"
+      rm -rf "$tmpdir"
+      trap - EXIT
+      redirect "/admin/owasp"
+      ;;
     /admin/owasp/rule/disable)
       run_or_error /opt/liteedge/bin/wafctl.sh disable "${PARAM[rule_id]:-}"
       redirect "/admin/owasp"
@@ -1030,7 +1147,7 @@ case "$path" in
   /admin/site) site_editor ;;
   /admin/owasp) owasp_page ;;
   /admin/server) server_page ;;
-  /admin/site/save|/admin/site/delete|/admin/route/add|/admin/route/save|/admin/route/delete|/admin/cert/selfsigned|/admin/cert/letsencrypt|/admin/cert/import|/admin/waf/disable|/admin/waf/enable|/admin/owasp/pl|/admin/owasp/catalog/refresh|/admin/owasp/plugin/install|/admin/owasp/plugin/remove|/admin/owasp/rule/disable|/admin/owasp/rule/enable|/admin/owasp/custom/save|/admin/owasp/custom/disable|/admin/owasp/custom/enable|/admin/owasp/custom/delete|/admin/server/save|/admin/config/save|/admin/config/reset)
+  /admin/site/save|/admin/site/delete|/admin/route/add|/admin/route/save|/admin/route/delete|/admin/cert/selfsigned|/admin/cert/letsencrypt|/admin/cert/import|/admin/waf/disable|/admin/waf/enable|/admin/owasp/pl|/admin/owasp/catalog/refresh|/admin/owasp/plugin/install|/admin/owasp/plugin/remove|/admin/owasp/plugin/config-save|/admin/owasp/rule/disable|/admin/owasp/rule/enable|/admin/owasp/custom/save|/admin/owasp/custom/disable|/admin/owasp/custom/enable|/admin/owasp/custom/delete|/admin/server/save|/admin/config/save|/admin/config/reset)
     handle_post "$path" ;;
   *)
     page_head "Not found"
