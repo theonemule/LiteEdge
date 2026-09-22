@@ -89,6 +89,7 @@ page_head() {
   <script src="/assets/admin.js" defer></script>
   <style>
     dialog.liteedge-dialog { width:min(760px,calc(100vw - 2rem)); border:0; border-radius:.75rem; padding:0; box-shadow:0 1rem 3rem rgba(0,0,0,.25); }
+    dialog.liteedge-dialog.liteedge-dialog-lg { width:min(1400px,calc(100vw - 2rem)); }
     dialog.liteedge-dialog::backdrop { background:rgba(0,0,0,.45); }
     .sidebar-nav { min-height:calc(100vh - 56px); }
     .sidebar-nav .nav-link { color:var(--bs-body-color); border-radius:.375rem; }
@@ -223,7 +224,7 @@ HTML
       if [[ "$route_count" == 0 && -n "$(kv_get "$file" UPSTREAM)" ]]; then route_count=1; fi
       tls="$(cert_mode "$host")"
       cat <<HTML
-<tr><td><a class="fw-semibold text-decoration-none" href="/admin/site?host=$(html_escape "$host")">$(html_escape "$host")</a></td><td>$(html_escape "${aliases:-—}")</td><td><span class="badge text-bg-light border">$route_count</span></td><td><span class="badge text-bg-light border">$(html_escape "$tls")</span></td><td class="text-end"><a class="btn btn-sm btn-outline-primary" href="/admin/site?host=$(html_escape "$host")">Manage</a> <form class="d-inline" method="post" action="/admin/site/delete"><input type="hidden" name="host" value="$(html_escape "$host")"><button class="btn btn-sm btn-outline-danger" type="submit">Delete</button></form></td></tr>
+<tr><td><a class="fw-semibold text-decoration-none" href="/admin/site?host=$(html_escape "$host")">$(html_escape "$host")</a></td><td>$(html_escape "${aliases:--}")</td><td><span class="badge text-bg-light border">$route_count</span></td><td><span class="badge text-bg-light border">$(html_escape "$tls")</span></td><td class="text-end"><a class="btn btn-sm btn-outline-primary" href="/admin/site?host=$(html_escape "$host")">Manage</a> <form class="d-inline" method="post" action="/admin/site/delete"><input type="hidden" name="host" value="$(html_escape "$host")"><button class="btn btn-sm btn-outline-danger" type="submit">Delete</button></form></td></tr>
 HTML
     done
   fi
@@ -335,7 +336,7 @@ HTML
 <div class="border rounded p-3 mt-3">
 <div class="d-flex flex-wrap gap-4 align-items-center mb-3">
 <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="waf" value="1" id="waf_$id" $(checkbox "$waf")><label class="form-check-label fw-semibold" for="waf_$id">OWASP CRS</label></div>
-<div><label class="form-label mb-1">Protection level</label><select class="form-select form-select-sm" name="waf_pl"><option value="1" $(selected "$waf_pl" 1)>PL1 — Normal</option><option value="2" $(selected "$waf_pl" 2)>PL2 — Enhanced</option><option value="3" $(selected "$waf_pl" 3)>PL3 — High</option><option value="4" $(selected "$waf_pl" 4)>PL4 — Extreme</option></select></div>
+<div><label class="form-label mb-1">Protection level</label><select class="form-select form-select-sm" name="waf_pl"><option value="1" $(selected "$waf_pl" 1)>PL1 - Normal</option><option value="2" $(selected "$waf_pl" 2)>PL2 - Enhanced</option><option value="3" $(selected "$waf_pl" 3)>PL3 - High</option><option value="4" $(selected "$waf_pl" 4)>PL4 - Extreme</option></select></div>
 </div>
 <div class="row g-3">
 <div class="col-lg-6"><div class="fw-semibold mb-2">Application exclusion plugins</div>
@@ -372,7 +373,7 @@ HTML
 <div class="border rounded p-3 mt-3">
 <div class="d-flex flex-wrap gap-4 align-items-center mb-3">
 <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="waf" value="1" id="new_waf" checked><label class="form-check-label fw-semibold" for="new_waf">OWASP CRS</label></div>
-<div><label class="form-label mb-1">Protection level</label><select class="form-select form-select-sm" name="waf_pl"><option value="1" $(selected "$default_pl" 1)>PL1 — Normal</option><option value="2" $(selected "$default_pl" 2)>PL2 — Enhanced</option><option value="3" $(selected "$default_pl" 3)>PL3 — High</option><option value="4" $(selected "$default_pl" 4)>PL4 — Extreme</option></select></div>
+<div><label class="form-label mb-1">Protection level</label><select class="form-select form-select-sm" name="waf_pl"><option value="1" $(selected "$default_pl" 1)>PL1 - Normal</option><option value="2" $(selected "$default_pl" 2)>PL2 - Enhanced</option><option value="3" $(selected "$default_pl" 3)>PL3 - High</option><option value="4" $(selected "$default_pl" 4)>PL4 - Extreme</option></select></div>
 </div>
 <div class="row g-3"><div class="col-lg-6"><div class="fw-semibold mb-2">Application exclusion plugins</div>
 HTML
@@ -731,7 +732,7 @@ HTML
 }
 
 crs_rules_panel() {
-  local disabled rule_id source pl message state rule_count
+  local disabled rule_id source pl message state rule_count disabled_count
   declare -A disabled_map=()
   disabled="$(global_disabled_waf_rules)"
   while IFS= read -r rule_id; do
@@ -739,17 +740,34 @@ crs_rules_panel() {
   done <<< "$disabled"
 
   rule_count="$(crs_rule_rows | wc -l | tr -d ' ')"
+  disabled_count="${#disabled_map[@]}"
+
   cat <<HTML
 <div class="card shadow-sm mb-4">
-  <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
-    <div><strong>CRS Rules</strong><span class="text-secondary small ms-2">$(html_escape "$rule_count") actionable rules</span></div>
-    <input class="form-control form-control-sm" id="crsRuleSearch" style="max-width:22rem" type="search" placeholder="Search ID, message, PL, or rule file">
+  <div class="card-body d-flex flex-wrap justify-content-between align-items-center gap-3">
+    <div>
+      <h2 class="h5 mb-1">CRS Rules</h2>
+      <div class="text-secondary">$(html_escape "$rule_count") actionable rules · $(html_escape "$disabled_count") globally disabled</div>
+      <div class="small text-secondary mt-1">Browse, search, enable, or disable individual core CRS rules.</div>
+    </div>
+    <button class="btn btn-outline-primary" type="button" data-dialog-open="crsRulesDialog">Manage Rules</button>
   </div>
-  <div class="card-body pb-2"><p class="text-secondary mb-0">Enable or disable core CRS rules globally. Route-only exclusions remain in the route editor.</p></div>
-  <div class="table-responsive" style="max-height:42rem;overflow:auto">
-    <table class="table table-sm align-middle mb-0">
-      <thead class="sticky-top bg-body"><tr><th>ID</th><th>Rule</th><th>PL</th><th>Source</th><th>Status</th><th class="text-end">Action</th></tr></thead>
-      <tbody id="crsRuleTable">
+</div>
+
+<dialog class="liteedge-dialog liteedge-dialog-lg" id="crsRulesDialog">
+  <div class="card border-0">
+    <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-3">
+      <div><strong>CRS Rules</strong><span class="text-secondary small ms-2">$(html_escape "$rule_count") actionable rules</span></div>
+      <div class="d-flex align-items-center gap-2 flex-grow-1 justify-content-end">
+        <input class="form-control form-control-sm" id="crsRuleSearch" style="max-width:28rem" type="search" placeholder="Search ID, message, PL, or rule file">
+        <button class="btn-close" type="button" data-dialog-close aria-label="Close"></button>
+      </div>
+    </div>
+    <div class="card-body pb-2"><p class="text-secondary mb-0">Enable or disable core CRS rules globally. Route-only exclusions remain in the route editor.</p></div>
+    <div class="table-responsive" style="max-height:70vh;overflow:auto">
+      <table class="table table-sm align-middle mb-0">
+        <thead class="sticky-top bg-body"><tr><th>ID</th><th>Rule</th><th>PL</th><th>Source</th><th>Status</th><th class="text-end">Action</th></tr></thead>
+        <tbody id="crsRuleTable">
 HTML
 
   while IFS=$'\t' read -r rule_id source pl message; do
@@ -763,7 +781,7 @@ HTML
 <tr data-rule-row data-rule-search="$(html_escape "$rule_id $message PL$pl $source $state")">
   <td><code>$(html_escape "$rule_id")</code></td>
   <td>$(html_escape "$message")</td>
-  <td>$([[ "$pl" == "-" ]] && echo '<span class="text-secondary">—</span>' || echo "<span class=\"badge text-bg-light border\">PL$(html_escape "$pl")</span>")</td>
+  <td>$(if [[ "$pl" == "-" ]]; then printf '%s' '<span class="text-secondary">-</span>'; else printf '<span class="badge text-bg-light border">PL%s</span>' "$(html_escape "$pl")"; fi)</td>
   <td><code class="small">$(html_escape "$source")</code></td>
   <td>$([[ "$state" == enabled ]] && echo '<span class="badge text-bg-success">Enabled</span>' || echo '<span class="badge text-bg-secondary">Disabled globally</span>')</td>
   <td class="text-end">
@@ -777,16 +795,18 @@ HTML
   done < <(crs_rule_rows)
 
   cat <<'HTML'
-      </tbody>
-    </table>
+        </tbody>
+      </table>
+    </div>
+    <div class="card-footer d-flex flex-wrap justify-content-between align-items-end gap-3">
+      <form method="post" action="/admin/owasp/rule/disable" class="row g-2 align-items-end">
+        <div class="col-auto"><label class="form-label">Disable by rule ID</label><input class="form-control font-monospace" name="rule_id" pattern="[0-9]{1,9}" required></div>
+        <div class="col-auto"><button class="btn btn-outline-danger" type="submit">Disable globally</button></div>
+      </form>
+      <button class="btn btn-secondary" type="button" data-dialog-close>Close</button>
+    </div>
   </div>
-  <div class="card-footer">
-    <form method="post" action="/admin/owasp/rule/disable" class="row g-2 align-items-end">
-      <div class="col-sm-4"><label class="form-label">Disable by rule ID</label><input class="form-control font-monospace" name="rule_id" pattern="[0-9]{1,9}" required></div>
-      <div class="col-auto"><button class="btn btn-outline-danger" type="submit">Disable globally</button></div>
-    </form>
-  </div>
-</div>
+</dialog>
 HTML
 }
 
@@ -808,7 +828,7 @@ owasp_page() {
 <div class="col-6 col-lg-3"><input class="btn-check" type="radio" name="pl" value="1" id="pl1" $([[ "$pl" == 1 ]] && echo checked)><label class="btn btn-outline-primary w-100" for="pl1"><b>PL1</b><br><small>Normal</small></label></div>
 <div class="col-6 col-lg-3"><input class="btn-check" type="radio" name="pl" value="2" id="pl2" $([[ "$pl" == 2 ]] && echo checked)><label class="btn btn-outline-primary w-100" for="pl2"><b>PL2</b><br><small>Enhanced</small></label></div>
 <div class="col-6 col-lg-3"><input class="btn-check" type="radio" name="pl" value="3" id="pl3" $([[ "$pl" == 3 ]] && echo checked)><label class="btn btn-outline-primary w-100" for="pl3"><b>PL3</b><br><small>High</small></label></div>
-<div class="col-6 col-lg-3"><input class="btn-check" type="radio" name="pl" value="4" id="pl4" $([[ "$pl" == 4 ]] && echo checked)><label class="btn btn-outline-primary w-100" for="pl4"><b>PL1</b><br><small>Extreme</small></label></div>
+<div class="col-6 col-lg-3"><input class="btn-check" type="radio" name="pl" value="4" id="pl4" $([[ "$pl" == 4 ]] && echo checked)><label class="btn btn-outline-primary w-100" for="pl4"><b>PL4</b><br><small>Extreme</small></label></div>
 </div><button class="btn btn-primary mt-3" type="submit">Save default</button></form><div class="form-text mt-2">Existing routes keep their explicit protection level.</div></div></div></div>
 </div>
 HTML
