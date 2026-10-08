@@ -7,7 +7,9 @@ with a small Bootstrap management UI and shell-only control plane.
 
 The distributable product is a pre-built Alpine/musl release bundle. The same
 bundle is consumed by both the hardened Docker image and the standalone Alpine
-installer. Production deployments do not need a compiler toolchain.
+installer. Docker image builds also overlay the checked-out management listener
+templates and runtime renderer, so a security change can be rebuilt immediately
+without recompiling NGINX or ModSecurity. Production deployments do not need a compiler toolchain.
 
 The management plane is intentionally small:
 
@@ -82,11 +84,17 @@ the thin Alpine runtime image from the selected LiteEdge release, and starts it.
 
 Open:
 
-    https://SERVER_IP/
+    https://127.0.0.1:8443/
 
-Requests to the management listener over HTTP are redirected to HTTPS before Basic
-Auth credentials are requested. The initial HTTPS management certificate is
-self-signed. Use the Basic Auth credentials printed by install.sh.
+The public website listeners remain on ports 80 and 443. The admin console is
+available only on the separate port 8443, not on the default website listener.
+For access from another device on your LAN, set `LITEEDGE_ADMIN_BIND_IP` in
+`.env` to the server's actual private LAN address (for example `10.0.1.2`),
+then run `docker compose up -d`. Access `https://10.0.1.2:8443/` when that is
+the server's address. The default bind is `127.0.0.1` (local access only).
+Do not forward TCP 8443 from your router or allow it through a public firewall.
+The admin listener requires HTTPS and Basic Authentication. Its initial
+certificate is self-signed. Use the credentials printed by install.sh.
 
 To enable Let's Encrypt, edit .env and set:
 
@@ -104,8 +112,10 @@ port 80 must be reachable from the Internet.
 The Compose deployment runs LiteEdge as UID/GID 10001, uses a read-only root
 filesystem, drops all Linux capabilities, enables no-new-privileges, sets a PID
 limit, and provides only /data plus a small /tmp tmpfs as writable storage.
-NGINX listens on unprivileged container ports 8080 and 8443, which are mapped to
-host ports 80 and 443. The CGI worker runs as the same unprivileged LiteEdge user.
+NGINX uses container ports 8080 (public HTTP), 8443 (public HTTPS), and 9443
+(admin HTTPS). Host ports are 80, 443, and 8443 respectively. Docker publishes
+the admin port on loopback only unless `LITEEDGE_ADMIN_BIND_IP` is set to an
+explicit LAN address. The CGI worker runs as the same unprivileged LiteEdge user.
 
 ## Standalone Alpine install
 
@@ -118,6 +128,8 @@ To install a specific release:
 
     ./install-alpine.sh --version v0.1.0
 
+The standalone service serves public sites on 80/443 and administration on
+8443. Restrict 8443 to trusted LAN/VPN networks with the host firewall.
 The standalone service runs as the locked-down liteedge account. Only the NGINX
 binary receives CAP_NET_BIND_SERVICE, allowing the unprivileged process to bind
 ports 80 and 443. Persistent state is stored under /var/lib/liteedge, configuration
@@ -158,8 +170,8 @@ The UI calls the same scripts that can be used manually inside the container:
 
 ## Security model
 
-The management UI is protected by NGINX HTTP Basic Auth over HTTPS. HTTP requests to
-the management listener are redirected before authentication. The UI uses no
+The management UI is protected by NGINX HTTP Basic Auth on its dedicated HTTPS
+listener. Public HTTP/HTTPS listeners never route to the management UI. The UI uses no
 client-side application framework and loads its Bootstrap stylesheet locally.
 
 Generated NGINX configuration receives baseline security headers. Route WAF policies

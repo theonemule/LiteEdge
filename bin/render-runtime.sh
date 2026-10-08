@@ -5,6 +5,7 @@ source /opt/liteedge/bin/common.sh
 
 HTTP_PORT="${LITEEDGE_HTTP_PORT:-80}"
 HTTPS_PORT="${LITEEDGE_HTTPS_PORT:-443}"
+ADMIN_HTTPS_PORT="${LITEEDGE_ADMIN_HTTPS_PORT:-8443}"
 RUN_DIR="${LITEEDGE_RUN_DIR:-/tmp/liteedge-run}"
 RESOLVER="${LITEEDGE_RESOLVER:-}"
 
@@ -18,6 +19,8 @@ PARANOIA_LEVEL="$(waf_setting_get PARANOIA_LEVEL 1)"
 
 [[ "$HTTP_PORT" =~ ^[0-9]+$ && "$HTTP_PORT" -ge 1 && "$HTTP_PORT" -le 65535 ]] || die "Invalid HTTP port."
 [[ "$HTTPS_PORT" =~ ^[0-9]+$ && "$HTTPS_PORT" -ge 1 && "$HTTPS_PORT" -le 65535 ]] || die "Invalid HTTPS port."
+[[ "$ADMIN_HTTPS_PORT" =~ ^[0-9]+$ && "$ADMIN_HTTPS_PORT" -ge 1 && "$ADMIN_HTTPS_PORT" -le 65535 ]] || die "Invalid admin HTTPS port."
+[[ "$ADMIN_HTTPS_PORT" != "$HTTP_PORT" && "$ADMIN_HTTPS_PORT" != "$HTTPS_PORT" && "$HTTP_PORT" != "$HTTPS_PORT" ]] || die "Public and admin listener ports must be distinct."
 [[ "$RUN_DIR" == /* && "$RUN_DIR" != *$'\n'* ]] || die "Invalid runtime directory."
 
 if [[ -n "$SETTINGS_RESOLVER" ]]; then
@@ -73,6 +76,7 @@ sed \
   -e "s|@RUN_DIR@|$run_esc|g" \
   -e "s|@HTTP_PORT@|$HTTP_PORT|g" \
   -e "s|@HTTPS_PORT@|$HTTPS_PORT|g" \
+  -e "s|@ADMIN_HTTPS_PORT@|$ADMIN_HTTPS_PORT|g" \
   "$admin_template" | replace_file "$NGINX_DIR/admin.conf"
 
 # ModSecurity's writable paths and include root are runtime-specific too.

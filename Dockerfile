@@ -25,22 +25,29 @@ RUN apk add --no-cache \
     && test -x /opt/liteedge/entrypoint.sh \
     && LD_LIBRARY_PATH=/opt/liteedge/lib /opt/liteedge/sbin/nginx -V 2>&1 | grep -q 'ModSecurity-nginx'
 
+# Keep the control-plane listener configuration in sync with this source checkout.
+# This also allows a secure Docker rebuild before the next binary release is cut.
+COPY nginx/admin.conf /opt/liteedge/etc/nginx/admin.conf.template
+COPY nginx/admin-http.conf /opt/liteedge/etc/nginx/admin-http.conf.template
+COPY bin/render-runtime.sh /opt/liteedge/bin/render-runtime.sh
+
 ENV PATH=/opt/liteedge/bin:/opt/liteedge/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     LD_LIBRARY_PATH=/opt/liteedge/lib \
     DATA_DIR=/data \
     LITEEDGE_RUN_DIR=/tmp/liteedge-run \
     LITEEDGE_HTTP_PORT=8080 \
-    LITEEDGE_HTTPS_PORT=8443
+    LITEEDGE_HTTPS_PORT=8443 \
+    LITEEDGE_ADMIN_HTTPS_PORT=9443
 USER 10001:10001
 VOLUME ["/data"]
 
-EXPOSE 8080 8443
+EXPOSE 8080 8443 9443
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD if [ "${LITEEDGE_ADMIN_HTTP_ONLY:-0}" = "1" ]; then \
-        code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/)"; \
+        code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9443/)"; \
       else \
-        code="$(curl -k -s -o /dev/null -w '%{http_code}' https://127.0.0.1:8443/)"; \
+        code="$(curl -k -s -o /dev/null -w '%{http_code}' https://127.0.0.1:9443/)"; \
       fi; \
       test "$code" = "401"
 

@@ -37,6 +37,7 @@ LITEEDGE_VERSION=v0.1.0
 LITEEDGE_REPO=theonemule/LiteEdge
 LITEEDGE_UID=$uid
 LITEEDGE_GID=$gid
+LITEEDGE_ADMIN_BIND_IP=127.0.0.1
 ENV
   chmod 600 .env
   echo "Created .env"
@@ -48,10 +49,13 @@ else
   grep -q '^LITEEDGE_REPO=' .env || printf 'LITEEDGE_REPO=theonemule/LiteEdge\n' >> .env
   grep -q '^LITEEDGE_UID=' .env || printf 'LITEEDGE_UID=%s\n' "$uid" >> .env
   grep -q '^LITEEDGE_GID=' .env || printf 'LITEEDGE_GID=%s\n' "$gid" >> .env
+  grep -q '^LITEEDGE_ADMIN_BIND_IP=' .env || printf 'LITEEDGE_ADMIN_BIND_IP=127.0.0.1\n' >> .env
 fi
 
 docker compose up -d --build
 
 echo
-echo "LiteEdge is running on host ports 80 and 443."
-echo "Open https://<server-ip>/"
+echo "LiteEdge public sites use host ports 80 and 443."
+echo "Admin console: https://127.0.0.1:8443/ (loopback-only by default)."
+echo "For LAN access set LITEEDGE_ADMIN_BIND_IP to this server's private LAN IP in .env,"
+echo "then run docker compose up -d. Do not forward port 8443 from the internet."
