@@ -926,6 +926,27 @@ server_page() {
 <div class="col-md-6"><label class="form-label">DNS resolver</label><input class="form-control font-monospace" name="resolver" value="$(html_escape "$resolver")" placeholder="Automatic from /etc/resolv.conf"><div class="form-text">Leave blank for automatic detection.</div></div>
 </div></div><div class="card-footer text-end"><button class="btn btn-primary">Save server settings</button></div></form>
 HTML
+  local csrf
+  csrf="$(/opt/liteedge/bin/authctl.sh token 2>/dev/null)" || error_page "Cannot load security settings."
+  cat <<HTML
+<section class="card shadow-sm mt-4">
+  <div class="card-header"><strong>Admin Password</strong></div>
+  <div class="card-body">
+    <p class="text-secondary">Change the password for the administrator account currently signed in. Changes are saved in persistent authentication storage.</p>
+    <form method="post" action="/admin/server/password" autocomplete="on">
+      <input type="hidden" name="csrf_token" value="$(html_escape "$csrf")">
+      <div class="row g-3">
+        <div class="col-md-6"><label class="form-label" for="current_password">Current password</label><input class="form-control" id="current_password" name="current_password" type="password" autocomplete="current-password" required></div>
+        <div class="col-md-6"></div>
+        <div class="col-md-6"><label class="form-label" for="new_password">New password</label><input class="form-control" id="new_password" name="new_password" type="password" minlength="12" maxlength="256" autocomplete="new-password" required></div>
+        <div class="col-md-6"><label class="form-label" for="confirm_password">Confirm new password</label><input class="form-control" id="confirm_password" name="confirm_password" type="password" minlength="12" maxlength="256" autocomplete="new-password" required></div>
+      </div>
+      <div class="form-text mt-2">Use at least 12 characters. Your browser may prompt you to authenticate again after the change.</div>
+      <button class="btn btn-primary mt-3" type="submit">Change password</button>
+    </form>
+  </div>
+</section>
+HTML
   page_tail
 }
 
@@ -1203,6 +1224,21 @@ handle_post() {
       run_or_error /opt/liteedge/bin/wafctl.sh custom-delete "${PARAM[rule_id]:-}"
       redirect "/admin/owasp"
       ;;
+    /admin/server/password)
+      [[ "${PARAM[new_password]:-}" == "${PARAM[confirm_password]:-}" ]] ||
+        error_page "New password and confirmation do not match."
+      if output="$(printf '%s\0%s\0%s\0' "${PARAM[csrf_token]:-}" "${PARAM[current_password]:-}" "${PARAM[new_password]:-}" | /opt/liteedge/bin/authctl.sh change 2>&1)"; then
+        page_head "Password changed"
+        cat <<'HTML'
+<div class="alert alert-success"><h1 class="h5">Admin password updated</h1>
+<p class="mb-0">Your new password is active. When your browser asks you to sign in again, use the new password.</p></div>
+<a class="btn btn-primary" href="/admin/server">Back to Server Settings</a>
+HTML
+        page_tail
+      else
+        error_page "$output"
+      fi
+      ;;
     /admin/server/save)
       run_or_error /opt/liteedge/bin/serverctl.sh save "${PARAM[worker_connections]:-1024}" "${PARAM[keepalive_timeout]:-65}" "${PARAM[header_timeout]:-15}" "${PARAM[body_timeout]:-15}" "${PARAM[send_timeout]:-30}" "${PARAM[route_timeout]:-60}" "${PARAM[resolver]:-}"
       redirect "/admin/server"
@@ -1265,7 +1301,7 @@ case "$path" in
   /admin/site) site_editor ;;
   /admin/owasp) owasp_page ;;
   /admin/server) server_page ;;
-  /admin/site/save|/admin/site/delete|/admin/route/add|/admin/route/save|/admin/route/delete|/admin/cert/selfsigned|/admin/cert/letsencrypt|/admin/cert/import|/admin/waf/disable|/admin/waf/enable|/admin/owasp/pl|/admin/owasp/crs/check|/admin/owasp/crs/update|/admin/owasp/crs/reset|/admin/owasp/catalog/refresh|/admin/owasp/plugin/install|/admin/owasp/plugin/remove|/admin/owasp/plugin/config-save|/admin/owasp/rule/disable|/admin/owasp/rule/enable|/admin/owasp/custom/save|/admin/owasp/custom/disable|/admin/owasp/custom/enable|/admin/owasp/custom/delete|/admin/server/save|/admin/config/save|/admin/config/reset)
+  /admin/site/save|/admin/site/delete|/admin/route/add|/admin/route/save|/admin/route/delete|/admin/cert/selfsigned|/admin/cert/letsencrypt|/admin/cert/import|/admin/waf/disable|/admin/waf/enable|/admin/owasp/pl|/admin/owasp/crs/check|/admin/owasp/crs/update|/admin/owasp/crs/reset|/admin/owasp/catalog/refresh|/admin/owasp/plugin/install|/admin/owasp/plugin/remove|/admin/owasp/plugin/config-save|/admin/owasp/rule/disable|/admin/owasp/rule/enable|/admin/owasp/custom/save|/admin/owasp/custom/disable|/admin/owasp/custom/enable|/admin/owasp/custom/delete|/admin/server/save|/admin/server/password|/admin/config/save|/admin/config/reset)
     handle_post "$path" ;;
   *)
     page_head "Not found"

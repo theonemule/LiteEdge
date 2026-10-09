@@ -30,6 +30,8 @@ RUN apk add --no-cache \
 COPY nginx/admin.conf /opt/liteedge/etc/nginx/admin.conf.template
 COPY nginx/admin-http.conf /opt/liteedge/etc/nginx/admin-http.conf.template
 COPY bin/render-runtime.sh /opt/liteedge/bin/render-runtime.sh
+COPY bin/authctl.sh /opt/liteedge/bin/authctl.sh
+COPY cgi/admin.sh /opt/liteedge/cgi/admin.sh
 
 ENV PATH=/opt/liteedge/bin:/opt/liteedge/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     LD_LIBRARY_PATH=/opt/liteedge/lib \

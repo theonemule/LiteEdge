@@ -224,3 +224,14 @@ Run ShellCheck:
 Validate Compose:
 
     ADMIN_PASSWORD=test docker compose config
+
+
+### Changing the admin password
+
+Open **Server Settings → Admin Password** in the management console. Enter the
+current password and confirm a new one (at least 12 characters). The updated
+password hash is written atomically to the persistent `auth/.htpasswd` file in
+LiteEdge's data directory. It survives container restarts and upgrades.
+The original `ADMIN_PASSWORD` environment variable only initializes the
+password on first start; it does not reset a password changed in the UI.
+Your browser may need to reauthenticate using the new password.
