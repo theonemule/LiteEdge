@@ -72,7 +72,7 @@ jobs:
           set -euo pipefail
           bash scripts/build-release.sh 0.1.0
           (cd dist && sha256sum -c liteedge-linux-musl-x86_64.tar.gz.sha256)
-          tar -tzf dist/liteedge-linux-musl-x86_64.tar.gz | grep -Fxq opt/liteedge/entrypoint.sh
+          tar -tzf dist/liteedge-linux-musl-x86_64.tar.gz | grep -Fx opt/liteedge/entrypoint.sh
 
       - name: Save verified Docker image for inspection
         shell: bash
