@@ -58,5 +58,11 @@ done
 # Management authentication remains mandatory after route creation.
 [[ "$(curl -ksS -o /dev/null -w '%{http_code}' "https://127.0.0.1:$admin_port/" || true)" == 401 ]]
 docker exec "$edge" /opt/liteedge/bin/sitectl.sh delete ci.example.test
-[[ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: ci.example.test' "http://127.0.0.1:$port/" || true)" != 200 ]]
+deleted=false
+for i in $(seq 1 20); do
+  code="$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: ci.example.test' "http://127.0.0.1:$port/" || true)"
+  if [[ "$code" != 200 ]]; then deleted=true; break; fi
+  sleep 1
+done
+[[ "$deleted" == true ]] || { echo 'Deleted route is still proxying requests' >&2; exit 1; }
 echo 'PASS: actual NGINX route creation, WAF-enabled upstream proxying, deletion, config check and admin isolation'
