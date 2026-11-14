@@ -1,0 +1,101 @@
+name: Monthly LiteEdge build and regression
+
+on:
+  schedule:
+    # GitHub cron uses UTC. 15:17 UTC is Friday morning in US Eastern time.
+    - cron: '17 15 * * 5'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: liteedge-monthly-verification
+  cancel-in-progress: false
+
+jobs:
+  first-friday:
+    runs-on: ubuntu-24.04
+    outputs:
+      enabled: ${{ steps.guard.outputs.enabled }}
+    steps:
+      - name: Enforce first Friday of the month (manual runs always allowed)
+        id: guard
+        shell: bash
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" != schedule || $(date -u +%d) -le 7 ]]; then
+            echo enabled=true >> "$GITHUB_OUTPUT"
+          else
+            echo enabled=false >> "$GITHUB_OUTPUT"
+            echo "Skipping: not the first Friday of the month." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  verify:
+    needs: first-friday
+    if: needs.first-friday.outputs.enabled == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate shell source and unit regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          find bin cgi scripts tests -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n
+          bash -n entrypoint.sh install.sh
+          bash tests/test-admin-password.sh
+
+      - name: Build Docker image from the repository Dockerfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --pull --tag liteedge:monthly-ci .
+          docker image inspect liteedge:monthly-ci >/dev/null
+
+      - name: Integration - real NGINX route, reverse proxy, WAF and admin boundary
+        shell: bash
+        run: bash tests/reverse-proxy-smoke.sh liteedge:monthly-ci
+
+      - name: Build pinned Alpine/ModSecurity/NGINX release bundle from source
+        shell: bash
+        env:
+          BUILD_JOBS: '2'
+        run: |
+          set -euo pipefail
+          bash scripts/build-release.sh 0.1.0
+          (cd dist && sha256sum -c liteedge-linux-musl-x86_64.tar.gz.sha256)
+          tar -tzf dist/liteedge-linux-musl-x86_64.tar.gz | grep -Fxq opt/liteedge/entrypoint.sh
+
+      - name: Save verified Docker image for inspection
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          docker save liteedge:monthly-ci | gzip -1 > dist/liteedge-docker-x86_64.tar.gz
+          (cd dist && sha256sum liteedge-docker-x86_64.tar.gz > docker-SHA256SUMS)
+
+      - name: Upload build artifacts and checksums
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: liteedge-monthly-build
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+            dist/*SHA256SUMS
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Document verification scope
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## LiteEdge monthly CI'
+            echo 'Source bundle build, primary Dockerfile build, password/CSRF regressions,'
+            echo 'and disposable route/proxy/WAF/admin integration are required to succeed.'
+            echo 'No Docker registry push, release publication or production deployment occurs.'
+          } >> "$GITHUB_STEP_SUMMARY"
