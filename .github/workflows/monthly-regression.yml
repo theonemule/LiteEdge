@@ -1,6 +1,11 @@
 name: Monthly LiteEdge build and regression
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/monthly-regression.yml'
+      - 'tests/reverse-proxy-smoke.sh'
   schedule:
     # GitHub cron uses UTC. 15:17 UTC is Friday morning in US Eastern time.
     - cron: '17 15 * * 5'
